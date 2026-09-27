@@ -1,0 +1,472 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String
+  name         String
+  avatarUrl    String?
+  currency     String    @default("INR")
+  timezone     String    @default("Asia/Kolkata")
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  Sessions        Session[]
+  Accounts        Account[]
+  Categories      Category[]
+  Expenses        Expense[]
+  Incomes         Income[]
+  Budgets         Budget[]
+  Savings         Saving[]
+  Goals           Goal[]
+  Investments     Investment[]
+  ReceiptScans    ReceiptScan[]
+  ImportJobs      ImportJob[]
+  AIConversations AIConversation[]
+  Notifications   Notification[]
+  Reports         Report[]
+}
+
+model Session {
+  id               String    @id @default(uuid())
+  userId           String
+  refreshTokenHash String
+  rememberMe       Boolean   @default(false)
+  expiresAt        DateTime
+  lastActivityAt   DateTime  @default(now())
+  revokedAt        DateTime?
+  userAgent        String?
+  ipAddress        String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  User User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([refreshTokenHash])
+  @@index([expiresAt])
+  @@index([revokedAt])
+}
+
+model Account {
+  id                  String      @id @default(uuid())
+  userId              String
+  name                String
+  type                AccountType
+  institutionName     String?
+  accountNumberMasked String?
+  balance             Decimal     @db.Decimal(19, 4)
+  currency            String      @default("INR")
+  isActive            Boolean     @default(true)
+  createdAt           DateTime    @default(now())
+  updatedAt           DateTime    @updatedAt
+
+  User        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  Expenses    Expense[]
+  Incomes     Income[]
+  Savings     Saving[]
+  Investments Investment[]
+
+  @@index([userId])
+}
+
+enum AccountType {
+  BANK
+  CASH
+  CREDIT_CARD
+  DEBIT_CARD
+  WALLET
+  OTHER
+}
+
+model Category {
+  id        String       @id @default(uuid())
+  userId    String?
+  name      String
+  type      CategoryType
+  icon      String?
+  color     String?
+  isSystem  Boolean      @default(false)
+  isActive  Boolean      @default(true)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  User     User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  Expenses Expense[]
+  Incomes  Income[]
+  Budgets  Budget[]
+
+  @@unique([userId, name, type])
+  @@index([userId])
+  @@index([type])
+}
+
+enum CategoryType {
+  EXPENSE
+  INCOME
+}
+
+model Expense {
+  id            String         @id @default(uuid())
+  userId        String
+  accountId     String?
+  categoryId    String?
+  merchant      String
+  description   String?
+  amount        Decimal        @db.Decimal(19, 4)
+  date          DateTime
+  paymentMethod PaymentMethod?
+  currency      String         @default("INR")
+  notes         String?
+  receiptScanId String?        @unique
+  source        ExpenseSource  @default(MANUAL)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  User        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  Account     Account?     @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  Category    Category?    @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  ReceiptScan ReceiptScan? @relation(fields: [receiptScanId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([userId, date])
+  @@index([userId, categoryId])
+  @@index([userId, accountId])
+  @@index([userId, paymentMethod])
+  @@index([userId, createdAt])
+}
+
+enum PaymentMethod {
+  CASH
+  DEBIT_CARD
+  CREDIT_CARD
+  BANK_TRANSFER
+  UPI
+  WALLET
+  OTHER
+}
+
+enum ExpenseSource {
+  MANUAL
+  IMPORT
+  RECEIPT_SCAN
+  API
+}
+
+model Income {
+  id          String           @id @default(uuid())
+  userId      String
+  accountId   String?
+  categoryId  String?
+  source      String
+  description String?
+  amount      Decimal          @db.Decimal(19, 4)
+  date        DateTime
+  currency    String           @default("INR")
+  notes       String?
+  sourceType  IncomeSourceType @default(MANUAL)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  User     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  Account  Account?  @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  Category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([userId, date])
+}
+
+enum IncomeSourceType {
+  MANUAL
+  IMPORT
+  API
+}
+
+model Budget {
+  id         String   @id @default(uuid())
+  userId     String
+  categoryId String?
+  name       String
+  amount     Decimal  @db.Decimal(19, 4)
+  month      Int
+  year       Int
+  currency   String   @default("INR")
+  notes      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  User     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  Category Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, categoryId, month, year])
+  @@index([userId])
+  @@index([userId, month, year])
+}
+
+model Saving {
+  id           String       @id @default(uuid())
+  userId       String
+  accountId    String?
+  goalId       String?
+  name         String
+  type         SavingType
+  amount       Decimal      @db.Decimal(19, 4)
+  date         DateTime
+  currency     String       @default("INR")
+  note         String?
+  source       SavingSource
+  targetAmount Decimal?     @db.Decimal(19, 4)
+  targetDate   DateTime?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  User    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  Account Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  Goal    Goal?    @relation(fields: [goalId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([userId, date])
+  @@index([userId, goalId])
+  @@index([userId, type])
+}
+
+enum SavingType {
+  EMERGENCY
+  TRAVEL
+  EDUCATION
+  VEHICLE
+  HOME
+  RETIREMENT
+  PERSONAL
+  OTHER
+}
+
+enum SavingSource {
+  SALARY
+  BONUS
+  REDUCED_EXPENSES
+  FREELANCE
+  BUSINESS
+  INVESTMENT
+  GIFT
+  OTHER
+}
+
+model Goal {
+  id            String     @id @default(uuid())
+  userId        String
+  name          String
+  description   String?
+  targetAmount  Decimal    @db.Decimal(19, 4)
+  currentAmount Decimal    @default(0.0) @db.Decimal(19, 4)
+  targetDate    DateTime?
+  category      String?
+  status        GoalStatus @default(ACTIVE)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  User    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  Savings Saving[]
+
+  @@index([userId])
+  @@index([userId, status])
+}
+
+enum GoalStatus {
+  ACTIVE
+  COMPLETED
+  PAUSED
+  CANCELLED
+}
+
+model Investment {
+  id             String         @id @default(uuid())
+  userId         String
+  accountId      String?
+  name           String
+  type           InvestmentType
+  investedAmount Decimal        @db.Decimal(19, 4)
+  currentValue   Decimal?       @db.Decimal(19, 4)
+  quantity       Decimal?       @db.Decimal(19, 8)
+  purchaseDate   DateTime?
+  notes          String?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  User    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  Account Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+}
+
+enum InvestmentType {
+  STOCK
+  MUTUAL_FUND
+  ETF
+  BOND
+  FIXED_DEPOSIT
+  CRYPTO
+  GOLD
+  OTHER
+}
+
+model ReceiptScan {
+  id              String            @id @default(uuid())
+  userId          String
+  expenseId       String?           @unique
+  fileName        String
+  mimeType        String
+  fileSize        Int
+  merchant        String?
+  amount          Decimal?          @db.Decimal(19, 4)
+  transactionDate DateTime?
+  rawText         String?
+  parsedData      Json?
+  status          ReceiptScanStatus @default(PROCESSING)
+  errorMessage    String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  User    User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  Expense Expense?
+
+  @@index([userId])
+}
+
+enum ReceiptScanStatus {
+  PROCESSING
+  PARSED
+  CONFIRMED
+  FAILED
+}
+
+model ImportJob {
+  id             String          @id @default(uuid())
+  userId         String
+  fileName       String
+  mimeType       String
+  status         ImportJobStatus @default(PENDING)
+  totalRows      Int?
+  processedRows  Int?
+  successfulRows Int?
+  failedRows     Int?
+  errorMessage   String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  completedAt    DateTime?
+
+  User User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+enum ImportJobStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  PARTIAL
+  FAILED
+}
+
+model AIConversation {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  User     User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  Messages AIMessage[]
+
+  @@index([userId])
+  @@index([createdAt])
+}
+
+model AIMessage {
+  id             String        @id @default(uuid())
+  conversationId String
+  role           AIMessageRole
+  content        String
+  metadata       Json?
+  createdAt      DateTime      @default(now())
+
+  Conversation AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+}
+
+enum AIMessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}
+
+model Notification {
+  id        String           @id @default(uuid())
+  userId    String
+  title     String
+  message   String
+  type      NotificationType
+  isRead    Boolean          @default(false)
+  createdAt DateTime         @default(now())
+  readAt    DateTime?
+
+  User User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([userId, isRead])
+  @@index([createdAt])
+}
+
+enum NotificationType {
+  SYSTEM
+  BUDGET
+  GOAL
+  SAVING
+  EXPENSE
+  SECURITY
+  AI
+  REPORT
+}
+
+model Report {
+  id          String       @id @default(uuid())
+  userId      String
+  name        String
+  type        ReportType
+  startDate   DateTime?
+  endDate     DateTime?
+  fileUrl     String?
+  status      ReportStatus @default(GENERATING)
+  createdAt   DateTime     @default(now())
+  completedAt DateTime?
+
+  User User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+enum ReportType {
+  MONTHLY
+  ANNUAL
+  EXPENSE
+  BUDGET
+  SAVINGS
+  FINANCIAL_SUMMARY
+  CUSTOM
+}
+
+enum ReportStatus {
+  GENERATING
+  READY
+  FAILED
+}

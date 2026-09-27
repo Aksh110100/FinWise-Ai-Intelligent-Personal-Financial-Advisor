@@ -2,17 +2,19 @@ import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useDelayedUnmount } from '../../../hooks/useDelayedUnmount';
 import { X, TrendingUp, AlertTriangle } from 'lucide-react';
-import { AVAILABLE_CATEGORIES, Budget } from '../../../data/mockBudgetData';
 import { FinWiseDropdown } from './BudgetSharedComponents';
+
+const CATEGORIES = ['Food', 'Housing', 'Transport', 'Shopping', 'Subscriptions', 'Entertainment', 'Health', 'Education', 'Other'];
 
 interface CreateBudgetPanelProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (budget: Omit<Budget, 'id' | 'createdAt'>) => void;
+  onSubmit: (budget: any) => void;
   selectedMonth: string;
+  initialData?: any;
 }
 
-export const CreateBudgetPanel: React.FC<CreateBudgetPanelProps> = ({ isOpen, onClose, onSubmit, selectedMonth }) => {
+export const CreateBudgetPanel: React.FC<CreateBudgetPanelProps> = ({ isOpen, onClose, onSubmit, selectedMonth, initialData }) => {
   const { shouldRender, isClosing } = useDelayedUnmount(isOpen, 400);
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
@@ -27,13 +29,20 @@ export const CreateBudgetPanel: React.FC<CreateBudgetPanelProps> = ({ isOpen, on
 
   useEffect(() => {
     if (isOpen) {
-      setCategory('');
-      setLimit('');
-      setMonth(selectedMonth);
-      setNote('');
+      if (initialData) {
+        setCategory(initialData.category || '');
+        setLimit(initialData.amount ? initialData.amount.toString() : '');
+        setMonth(selectedMonth);
+        setNote(initialData.notes || '');
+      } else {
+        setCategory('');
+        setLimit('');
+        setMonth(selectedMonth);
+        setNote('');
+      }
       setError('');
     }
-  }, [isOpen, selectedMonth]);
+  }, [isOpen, selectedMonth, initialData]);
 
   if (!shouldRender) return null;
 
@@ -70,7 +79,7 @@ export const CreateBudgetPanel: React.FC<CreateBudgetPanelProps> = ({ isOpen, on
 
         <div className="qa-panel-content">
           <div className="qa-form-header">
-            <h2>CREATE A BUDGET</h2>
+            <h2>{initialData ? 'EDIT BUDGET LIMIT' : 'CREATE A BUDGET'}</h2>
           </div>
 
           {error && (
@@ -81,7 +90,13 @@ export const CreateBudgetPanel: React.FC<CreateBudgetPanelProps> = ({ isOpen, on
 
           <div style={{ marginBottom: '24px' }}>
             <label style={{ display: 'block', fontSize: '0.75rem', letterSpacing: '0.1em', color: 'var(--text-secondary)', marginBottom: '12px' }}>CATEGORY</label>
-            <FinWiseDropdown value={category} options={AVAILABLE_CATEGORIES} onChange={setCategory} placeholder="Select category..." />
+            {initialData ? (
+              <div style={{ padding: '12px 16px', background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.05)', borderRadius: '6px', color: 'var(--text-muted)' }}>
+                {category}
+              </div>
+            ) : (
+              <FinWiseDropdown value={category} options={CATEGORIES} onChange={setCategory} placeholder="Select category..." />
+            )}
           </div>
 
           <div style={{ marginBottom: '24px' }}>
@@ -112,7 +127,7 @@ export const CreateBudgetPanel: React.FC<CreateBudgetPanelProps> = ({ isOpen, on
             <label style={{ display: 'block', fontSize: '0.75rem', letterSpacing: '0.1em', color: 'var(--text-secondary)', marginBottom: '12px' }}>MONTH</label>
             <FinWiseDropdown 
               value={month} 
-              options={['June 2026', 'July 2026', 'August 2026', 'September 2026']} 
+              options={[selectedMonth]} 
               onChange={setMonth} 
             />
           </div>
@@ -140,7 +155,7 @@ export const CreateBudgetPanel: React.FC<CreateBudgetPanelProps> = ({ isOpen, on
 
           <div style={{ display: 'flex', gap: '16px', marginTop: '16px' }}>
             <button onClick={onClose} style={cancelBtnStyle}>CANCEL</button>
-            <button onClick={handleSubmit} style={submitBtnStyle}>CREATE BUDGET</button>
+            <button onClick={handleSubmit} style={submitBtnStyle}>{initialData ? 'SAVE CHANGES' : 'CREATE BUDGET'}</button>
           </div>
         </div>
       </div>
@@ -153,7 +168,7 @@ export const CreateBudgetPanel: React.FC<CreateBudgetPanelProps> = ({ isOpen, on
 interface CategoryDetailPanelProps {
   category: string;
   onClose: () => void;
-  budgets: Budget[];
+  budgets: any[];
   selectedMonth: string;
   spent: number;
 }

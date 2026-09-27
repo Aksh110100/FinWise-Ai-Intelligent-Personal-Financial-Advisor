@@ -1,41 +1,20 @@
 import React, { useEffect, useState } from 'react';
-import { Budget } from '../../../data/mockBudgetData';
-import { Transaction } from '../../../data/mockTransactions';
 
 interface BudgetOverviewProps {
-  budgets: Budget[];
-  transactions: Transaction[];
+  budgets: any[];
+  summary: any;
   selectedMonth: string;
 }
 
-export const BudgetOverview: React.FC<BudgetOverviewProps> = ({ budgets, transactions, selectedMonth }) => {
+export const BudgetOverview: React.FC<BudgetOverviewProps> = ({ budgets, summary, selectedMonth }) => {
   const [totalBudget, setTotalBudget] = useState(0);
   const [totalSpent, setTotalSpent] = useState(0);
   const [progressWidth, setProgressWidth] = useState(0);
 
   useEffect(() => {
-    // Calculate total budget for this month
-    const currentBudgets = budgets.filter(b => b.month === selectedMonth);
-    const sumBudget = currentBudgets.reduce((acc, b) => acc + b.limit, 0);
+    const sumBudget = summary?.totalBudget || 0;
+    const sumSpent = summary?.totalSpent || 0;
     
-    // Calculate spent
-    // Parse selectedMonth to filter transactions (rough approximation based on 'August 2026' string)
-    const monthIndex = new Date(`${selectedMonth} 1`).getMonth();
-    const year = new Date(`${selectedMonth} 1`).getFullYear();
-    
-    let sumSpent = 0;
-    transactions.forEach(tx => {
-      const txDate = new Date(tx.date);
-      if (tx.type === 'expense' && txDate.getMonth() === monthIndex && txDate.getFullYear() === year) {
-        // Also ensure we only sum spent for categories that HAVE a budget? 
-        // User requirements say "TOTAL BUDGET", "SPENT", "REMAINING". Usually this is across all budgets.
-        const hasBudget = currentBudgets.some(b => b.category.toLowerCase() === tx.category.toLowerCase());
-        if (hasBudget) {
-          sumSpent += tx.amount;
-        }
-      }
-    });
-
     setTotalBudget(sumBudget);
     setTotalSpent(sumSpent);
     
@@ -44,7 +23,7 @@ export const BudgetOverview: React.FC<BudgetOverviewProps> = ({ budgets, transac
       setProgressWidth(sumBudget > 0 ? Math.min((sumSpent / sumBudget) * 100, 100) : 0);
     }, 100);
 
-  }, [budgets, transactions, selectedMonth]);
+  }, [summary, selectedMonth]);
 
   const remaining = Math.max(totalBudget - totalSpent, 0);
   const healthPercent = totalBudget > 0 ? Math.round((totalSpent / totalBudget) * 100) : 0;

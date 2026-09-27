@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useDashboard } from '../../context/DashboardContext';
+import { useBudgets } from '../../hooks/useBudgets';
 import { ChevronLeft, ChevronRight, Check } from 'lucide-react';
 import { BudgetOverview } from '../../components/dashboard-premium/budget/BudgetOverview';
 import { BudgetList } from '../../components/dashboard-premium/budget/BudgetList';
@@ -10,39 +11,53 @@ import { CreateBudgetPanel, CategoryDetailPanel } from '../../components/dashboa
 import '../../styles/budget.css';
 
 const Budget: React.FC = () => {
-  const { budgets, transactions, addBudget, updateBudget, deleteBudget, applyAIOptimization } = useDashboard();
+  const { applyAIOptimization } = useDashboard();
   
   const [toastConfig, setToastConfig] = useState<{ message: string; type: 'success' | 'decline' } | null>(null);
   
-  const [selectedMonthIndex, setSelectedMonthIndex] = useState(0);
+  const [currentDate, setCurrentDate] = useState(new Date());
+
+  const filterMonth = currentDate.getMonth() + 1;
+  const filterYear = currentDate.getFullYear();
+  const selectedMonth = currentDate.toLocaleString('default', { month: 'long', year: 'numeric' });
+  const isCurrentMonth = new Date().getMonth() === currentDate.getMonth() && new Date().getFullYear() === currentDate.getFullYear();
+
   const [isCreatePanelOpen, setIsCreatePanelOpen] = useState(false);
+  const [editingBudget, setEditingBudget] = useState<any>(null);
   const [detailCategory, setDetailCategory] = useState<string | null>(null);
-  
   const [deleteConfirm, setDeleteConfirm] = useState<{ isOpen: boolean; id: string; categoryName: string }>({
     isOpen: false, id: '', categoryName: ''
   });
 
-  // A fixed set of months for the demo to match requirement
-  const availableMonths = ['June 2026', 'July 2026', 'August 2026', 'September 2026'];
-  const selectedMonth = availableMonths[selectedMonthIndex] || 'August 2026';
+  const { budgets, summary, analytics, loading, addBudget, updateBudget, deleteBudget } = useBudgets({ month: filterMonth, year: filterYear });
 
   useEffect(() => {
     window.scrollTo(0, 0);
-    // Default to August 2026 for the demo
-    const idx = availableMonths.indexOf('August 2026');
-    if (idx !== -1) setSelectedMonthIndex(idx);
   }, []);
 
   const handlePrevMonth = () => {
-    if (selectedMonthIndex > 0) setSelectedMonthIndex(prev => prev - 1);
+    setCurrentDate(prev => new Date(prev.getFullYear(), prev.getMonth() - 1, 1));
   };
 
   const handleNextMonth = () => {
-    if (selectedMonthIndex < availableMonths.length - 1) setSelectedMonthIndex(prev => prev + 1);
+    setCurrentDate(prev => new Date(prev.getFullYear(), prev.getMonth() + 1, 1));
   };
 
-  const handleCreateBudget = (budgetData: any) => {
-    addBudget(budgetData);
+  const handleCreateBudget = async (budgetData: any) => {
+    try {
+      if (editingBudget) {
+        await updateBudget(editingBudget.id, { amount: budgetData.limit });
+        setToastConfig({ message: 'Budget Updated', type: 'success' });
+      } else {
+        await addBudget(budgetData);
+        setToastConfig({ message: 'Budget Created', type: 'success' });
+      }
+      setTimeout(() => setToastConfig(null), 3500);
+      setEditingBudget(null);
+    } catch (e: any) {
+      setToastConfig({ message: e.message || 'Failed to save budget', type: 'decline' });
+      setTimeout(() => setToastConfig(null), 3500);
+    }
   };
 
   const handleAIOptimization = () => {
@@ -51,28 +66,21 @@ const Budget: React.FC = () => {
     setTimeout(() => setToastConfig(null), 3500);
   };
 
-  const handleDeleteConfirm = () => {
-    deleteBudget(deleteConfirm.id);
+  const handleDeleteConfirm = async () => {
+    await deleteBudget(deleteConfirm.id);
     setDeleteConfirm({ isOpen: false, id: '', categoryName: '' });
   };
 
-  const currentBudgets = budgets.filter(b => b.month === selectedMonth);
+  const currentBudgets = budgets;
 
   // Calculate spent for detail panel
   const getSpentForCategory = (category: string) => {
-    const mIdx = new Date(`${selectedMonth} 1`).getMonth();
-    const y = new Date(`${selectedMonth} 1`).getFullYear();
-    return transactions
-      .filter(tx => tx.type === 'expense' && tx.category.toLowerCase() === category.toLowerCase())
-      .filter(tx => {
-        const d = new Date(tx.date);
-        return d.getMonth() === mIdx && d.getFullYear() === y;
-      })
-      .reduce((sum, tx) => sum + tx.amount, 0);
+    const budget = budgets.find(b => b.category.toLowerCase() === category.toLowerCase());
+    return budget ? budget.spent : 0;
   };
 
-  const totalBudget = currentBudgets.reduce((acc, b) => acc + b.limit, 0);
-  const totalSpent = currentBudgets.reduce((acc, b) => acc + getSpentForCategory(b.category), 0);
+  const totalBudget = summary?.totalBudget || 0;
+  const totalSpent = summary?.totalSpent || 0;
 
   return (
     <div className="budget-page-container">
@@ -111,16 +119,16 @@ const Budget: React.FC = () => {
       {/* Month Selector */}
       <div className="anim-fade-up" style={{ animationDelay: '50ms' }}>
         <div className="budget-month-selector">
-          <button className="budget-month-btn" onClick={handlePrevMonth} style={{ opacity: selectedMonthIndex === 0 ? 0.3 : 1 }}>
+          <button className="budget-month-btn" onClick={handlePrevMonth}>
             <ChevronLeft size={20} />
           </button>
           
           <div className="budget-month-text">
-            <span>{selectedMonth}</span>
-            {selectedMonth === 'August 2026' && <span className="budget-month-indicator">THIS MONTH</span>}
+            <span>{selectedMonth.toUpperCase()}</span>
+            {isCurrentMonth && <span className="budget-month-indicator">THIS MONTH</span>}
           </div>
           
-          <button className="budget-month-btn" onClick={handleNextMonth} style={{ opacity: selectedMonthIndex === availableMonths.length - 1 ? 0.3 : 1 }}>
+          <button className="budget-month-btn" onClick={handleNextMonth}>
             <ChevronRight size={20} />
           </button>
         </div>
@@ -131,23 +139,25 @@ const Budget: React.FC = () => {
       ) : (
         <>
           <div className="anim-fade-up" style={{ animationDelay: '100ms' }}>
-            <BudgetOverview budgets={budgets} transactions={transactions} selectedMonth={selectedMonth} />
+            <BudgetOverview budgets={budgets} summary={summary} selectedMonth={selectedMonth} />
           </div>
 
           <div className="budget-row anim-fade-up" style={{ animationDelay: '150ms' }}>
             <div className="budget-col-main">
               <BudgetList 
                 budgets={budgets}
-                transactions={transactions}
                 selectedMonth={selectedMonth}
                 onCategoryClick={setDetailCategory}
                 onEditClick={(id) => {
-                  // A full app might open an edit panel. For this implementation, we just mock it.
-                  alert("Edit budget feature would open here.");
+                  const budgetToEdit = budgets.find(b => b.id === id);
+                  if (budgetToEdit) {
+                    setEditingBudget(budgetToEdit);
+                    setIsCreatePanelOpen(true);
+                  }
                 }}
                 onDeleteClick={(id, categoryName) => setDeleteConfirm({ isOpen: true, id, categoryName })}
               />
-              <BudgetGraph currentTotalBudget={totalBudget} currentTotalSpent={totalSpent} />
+              <BudgetGraph analytics={analytics} />
             </div>
             
             <div className="budget-col-side" style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
@@ -162,9 +172,13 @@ const Budget: React.FC = () => {
       {/* Panels & Modals */}
       <CreateBudgetPanel 
         isOpen={isCreatePanelOpen}
-        onClose={() => setIsCreatePanelOpen(false)}
+        onClose={() => {
+          setIsCreatePanelOpen(false);
+          setTimeout(() => setEditingBudget(null), 400); // clear after animation
+        }}
         onSubmit={handleCreateBudget}
         selectedMonth={selectedMonth}
+        initialData={editingBudget}
       />
 
       <CategoryDetailPanel 
