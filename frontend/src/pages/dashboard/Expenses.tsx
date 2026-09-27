@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { useDashboard } from '../../context/DashboardContext';
 import '../../styles/expenses.css';
 
 // Components
@@ -14,16 +13,17 @@ import { QuickActionPanel, ActionType } from '../../components/dashboard-premium
 
 import { Plus } from 'lucide-react';
 import { Transaction } from '../../data/mockTransactions';
+import { useExpenses } from '../../hooks/useExpenses';
 
 const Expenses: React.FC = () => {
-  const { dashboardData, transactions, addTransaction } = useDashboard();
-  
   const [filters, setFilters] = useState<FilterState>({
     search: '',
     category: 'All categories',
     paymentMethod: 'All',
-    dateRange: 'This month'
+    dateRange: '1M'
   });
+
+  const { expenses, summary, loading, error, addExpense, deleteExpense } = useExpenses(filters);
 
   const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
   const [activeAction, setActiveAction] = useState<ActionType>(null);
@@ -33,34 +33,68 @@ const Expenses: React.FC = () => {
   }, []);
 
   const handleClearFilters = () => {
-    setFilters({ search: '', category: 'All categories', paymentMethod: 'All', dateRange: 'This month' });
+    setFilters({ search: '', category: 'All categories', paymentMethod: 'All', dateRange: '1M' });
   };
 
-  const handleAddExpenseSuccess = (data: any, actionType: ActionType) => {
-    if (actionType) {
-      addTransaction({
-        merchant: data.name || 'Quick Action',
-        category: data.category || 'General',
-        date: data.date || new Date(),
-        paymentMethod: data.paymentMethod || 'Bank Transfer',
-        amount: data.amount,
-        type: actionType === 'expense' ? 'expense' : 'income',
-        note: data.note || ''
-      });
+  const handleAddExpenseSuccess = async (data: any, actionType: ActionType) => {
+    if (actionType === 'expense') {
+      await addExpense(data);
     }
   };
 
+  // Convert backend data to the shape expected by existing components
+  const mappedTransactions = expenses.map(e => ({
+    id: e.id,
+    merchant: e.merchant || e.Category?.name || 'Unknown',
+    category: e.Category?.name || 'Uncategorized',
+    date: e.date,
+    paymentMethod: e.paymentMethod,
+    amount: parseFloat(e.amount),
+    type: 'expense' as const,
+    note: e.description || e.notes || ''
+  }));
+
+  const mappedDashboardData = {
+    overview: {
+      monthlyExpenses: `₹${summary?.totalSpending?.toLocaleString('en-IN') || '0'}`,
+    },
+    spending: (summary?.categoryBreakdown || []).map((cat: any) => ({
+      category: cat.name,
+      amount: `₹${cat.amount.toLocaleString('en-IN')}`
+    })),
+    insights: []
+  };
+
   // Convert spending to proportional data
-  const categoryData = dashboardData.spending.map(s => {
-    const amountVal = parseFloat(s.amount.replace(/[^\d.]/g, ''));
-    const totalExp = parseFloat(dashboardData.overview.monthlyExpenses.replace(/[^\d.]/g, ''));
-    const percentage = totalExp > 0 ? Math.round((amountVal / totalExp) * 100) : 0;
+  const categoryData = (summary?.categoryBreakdown || []).map((cat: any) => {
+    const totalExp = summary?.totalSpending || 0;
+    const percentage = totalExp > 0 ? Math.round((cat.amount / totalExp) * 100) : 0;
     return {
-      category: s.category,
-      amount: s.amount,
+      category: cat.name,
+      amount: `₹${cat.amount.toLocaleString('en-IN')}`,
       percentage
     };
-  }).sort((a, b) => b.percentage - a.percentage);
+  }).sort((a: any, b: any) => b.percentage - a.percentage);
+
+  if (loading && expenses.length === 0 && !summary) {
+    return (
+      <div className="expenses-page-container" style={{ padding: '40px', textAlign: 'center' }}>
+        <div className="qa-ambient-glow" style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', opacity: 0.5 }}></div>
+        <p style={{ color: 'var(--text-secondary)' }}>Loading expenses...</p>
+      </div>
+    );
+  }
+
+  if (error && expenses.length === 0) {
+    return (
+      <div className="expenses-page-container" style={{ padding: '40px', textAlign: 'center' }}>
+        <p style={{ color: 'var(--text-negative)' }}>{error}</p>
+        <button className="qa-btn-primary" onClick={() => window.location.reload()} style={{ marginTop: '20px' }}>
+          RETRY
+        </button>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -78,7 +112,7 @@ const Expenses: React.FC = () => {
       </div>
 
       <div className="anim-stagger-2">
-        <ExpensesSummary data={dashboardData} transactions={transactions} />
+        <ExpensesSummary data={mappedDashboardData} transactions={mappedTransactions} />
       </div>
 
       <div className="anim-stagger-3" style={{ position: 'relative', zIndex: 10 }}>
@@ -93,25 +127,29 @@ const Expenses: React.FC = () => {
         {/* Graph Section */}
         <div className="expenses-panel" style={{ gridColumn: '1 / -1' }}>
           <div className="panel-header">SPENDING OVERVIEW</div>
-          <ExpenseGraph />
+          <ExpenseGraph filters={filters} />
         </div>
 
         {/* Category Analysis */}
         <div className="expenses-panel">
           <div className="panel-header">WHERE YOUR MONEY GOES</div>
-          <CategoryAnalysis data={categoryData} />
+          {categoryData.length > 0 ? (
+            <CategoryAnalysis data={categoryData} />
+          ) : (
+            <div style={{ padding: '2rem', textAlign: 'center', opacity: 0.6 }}>No categories for this period</div>
+          )}
         </div>
 
         {/* AI Analysis */}
         <div className="expenses-panel">
           <div className="panel-header">FINWISE AI ANALYSIS</div>
-          <AIExpenseAnalysis />
+          <AIExpenseAnalysis filters={filters} />
         </div>
       </div>
 
       <div className="anim-stagger-4" style={{ animationDelay: '0.5s' }}>
         <TransactionList 
-          transactions={transactions} 
+          transactions={mappedTransactions} 
           filters={filters} 
           onTransactionClick={setSelectedTx} 
         />
@@ -121,6 +159,10 @@ const Expenses: React.FC = () => {
       <TransactionDetailPanel 
         transaction={selectedTx} 
         onClose={() => setSelectedTx(null)} 
+        onDelete={async (id) => {
+          await deleteExpense(id);
+          setSelectedTx(null);
+        }}
       />
 
       <QuickActionPanel 

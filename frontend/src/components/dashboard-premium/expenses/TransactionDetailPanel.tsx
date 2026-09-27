@@ -7,17 +7,26 @@ import { Transaction } from '../../../data/mockTransactions';
 interface TransactionDetailPanelProps {
   transaction: Transaction | null;
   onClose: () => void;
+  onDelete?: (id: string) => void;
 }
 
-export const TransactionDetailPanel: React.FC<TransactionDetailPanelProps> = ({ transaction, onClose }) => {
+export const TransactionDetailPanel: React.FC<TransactionDetailPanelProps> = ({ transaction, onClose, onDelete }) => {
   const { shouldRender, isClosing } = useDelayedUnmount(!!transaction, 350);
+  const [localTx, setLocalTx] = React.useState<Transaction | null>(transaction);
+
+  useEffect(() => {
+    if (transaction) {
+      setLocalTx(transaction);
+    }
+  }, [transaction]);
 
   useEffect(() => {
     const handleEsc = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
     if (transaction) window.addEventListener('keydown', handleEsc);
     return () => window.removeEventListener('keydown', handleEsc);
   }, [transaction, onClose]);
-  if (!shouldRender) return null;
+  
+  if (!shouldRender || !localTx) return null;
 
   return createPortal(
     <div className={`qa-overlay center opening ${isClosing ? 'closing' : ''}`} onClick={onClose}>
@@ -34,38 +43,51 @@ export const TransactionDetailPanel: React.FC<TransactionDetailPanelProps> = ({ 
           
           <div style={{ marginBottom: '32px' }}>
             <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>MERCHANT</div>
-            <div style={{ fontSize: '1.25rem', color: 'var(--text-primary)' }}>{transaction.merchant}</div>
+            <div style={{ fontSize: '1.25rem', color: 'var(--text-primary)' }}>{localTx.merchant}</div>
           </div>
 
           <div style={{ marginBottom: '32px' }}>
             <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>AMOUNT</div>
-            <div style={{ fontFamily: 'var(--font-primary)', fontSize: '2rem', color: transaction.type === 'expense' ? 'var(--text-primary)' : 'var(--text-positive)' }}>
-              {transaction.type === 'expense' ? '−' : '+'} ₹{transaction.amount.toLocaleString('en-IN')}
+            <div style={{ fontFamily: 'var(--font-primary)', fontSize: '2rem', color: localTx.type === 'expense' ? 'var(--text-primary)' : 'var(--text-positive)' }}>
+              {localTx.type === 'expense' ? '−' : '+'} ₹{localTx.amount.toLocaleString('en-IN')}
             </div>
           </div>
 
           <div style={{ marginBottom: '32px' }}>
             <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>CATEGORY</div>
-            <div style={{ color: 'var(--text-primary)' }}>{transaction.category}</div>
+            <div style={{ color: 'var(--text-primary)' }}>{localTx.category}</div>
           </div>
 
           <div style={{ marginBottom: '32px' }}>
             <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>DATE</div>
             <div style={{ color: 'var(--text-primary)' }}>
-              {new Date(transaction.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
+              {new Date(localTx.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}
             </div>
           </div>
 
           <div style={{ marginBottom: '32px' }}>
             <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>PAYMENT METHOD</div>
-            <div style={{ color: 'var(--text-primary)' }}>{transaction.paymentMethod}</div>
+            <div style={{ color: 'var(--text-primary)' }}>{localTx.paymentMethod}</div>
           </div>
 
-          {transaction.note && (
+          {localTx.note && (
             <div style={{ marginBottom: '32px' }}>
               <div style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>NOTE</div>
-              <div style={{ color: 'var(--text-primary)' }}>{transaction.note}</div>
+              <div style={{ color: 'var(--text-primary)' }}>{localTx.note}</div>
             </div>
+          )}
+
+          {onDelete && (
+            <button 
+              className="qa-btn-danger" 
+              onClick={() => {
+                if (window.confirm('Are you sure you want to delete this expense?')) {
+                  onDelete(localTx.id);
+                }
+              }}
+            >
+              DELETE EXPENSE
+            </button>
           )}
           
         </div>

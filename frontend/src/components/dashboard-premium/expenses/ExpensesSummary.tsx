@@ -33,11 +33,13 @@ export const ExpensesSummary: React.FC<ExpensesSummaryProps> = ({ data, transact
   const daysInMonth = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0).getDate();
   const dailyAverage = targetTotal / (new Date().getDate() || 1); // rough avg for current month
 
-  const highestCategory = data.spending.reduce((prev: any, current: any) => {
-    const prevAmt = parseFloat(prev.amount.replace(/[^\d.]/g, ''));
-    const currAmt = parseFloat(current.amount.replace(/[^\d.]/g, ''));
-    return (prevAmt > currAmt) ? prev : current;
-  });
+  const highestCategory = data.spending && data.spending.length > 0
+    ? data.spending.reduce((prev: any, current: any) => {
+        const prevAmt = parseFloat(prev.amount.replace(/[^\d.]/g, '')) || 0;
+        const currAmt = parseFloat(current.amount.replace(/[^\d.]/g, '')) || 0;
+        return (prevAmt > currAmt) ? prev : current;
+      })
+    : { category: 'None', amount: '₹0' };
 
   const expenseTxsCount = transactions.filter(t => t.type === 'expense').length;
 
@@ -49,9 +51,8 @@ export const ExpensesSummary: React.FC<ExpensesSummaryProps> = ({ data, transact
         <span className="expense-stat-value">
           ₹{Math.floor(animatedTotal).toLocaleString('en-IN')}
         </span>
-        <div className="expense-stat-subtext positive">
-          <ArrowDownRight size={14} />
-          <span>8.2% from last month</span>
+        <div className="expense-stat-subtext">
+          <span>Current Period</span>
         </div>
       </div>
 

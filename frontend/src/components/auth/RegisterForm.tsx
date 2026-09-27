@@ -1,201 +1,86 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Eye, EyeOff } from 'lucide-react';
+import { setToken } from '../../utils/auth';
 
-interface RegisterFormProps {
-  isAnimatingOut: boolean;
-}
-
-export const RegisterForm: React.FC<RegisterFormProps> = ({ isAnimatingOut }) => {
-  const navigate = useNavigate();
+export const RegisterForm: React.FC<{ isAnimatingOut: boolean }> = ({ isAnimatingOut }) => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const navigate = useNavigate();
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
-    setIsLoading(true);
 
-    // No backend logic, immediately route to dashboard
-    setTimeout(() => {
-      localStorage.setItem('finwise_user', JSON.stringify({ name: name || 'Aksh', email }));
-      localStorage.setItem('finwise_authenticated', 'true');
-      navigate('/dashboard');
-    }, 400);
-  };
+    try {
+      const res = await fetch('http://localhost:5000/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ name, email, password })
+      });
 
-  const getAnimClass = (delay: number) => {
-    return `auth-anim-element delay-${delay} ${isAnimatingOut ? 'exit' : ''}`;
+      const data = await res.json();
+
+      if (res.ok) {
+        navigate('/login', { state: { successMessage: 'Account created successfully. Please log in.' } });
+      } else {
+        // Show actual backend error instead of Network error
+        if (res.status === 409) {
+          setError('An account with this email already exists.');
+        } else {
+          setError(data.message || 'Registration failed');
+        }
+      }
+    } catch (err) {
+      setError('Unable to connect to the server. Please try again.');
+    }
   };
 
   return (
-    <>
-      <h2 style={formTitleStyle} className={getAnimClass(1)}>CREATE YOUR<br/>FINANCIAL FUTURE.</h2>
-      
-      <form onSubmit={handleSubmit} style={formStyle}>
-        <div style={inputGroupStyle} className={getAnimClass(2)}>
-          <label style={labelStyle} htmlFor="name">Full Name</label>
-          <input 
-            type="text" 
-            id="name"
+    <div style={{ opacity: isAnimatingOut ? 0 : 1, transition: 'opacity 0.3s' }}>
+      <h2 style={{ color: 'white', marginBottom: '24px' }}>Create an account</h2>
+      {error && <div style={{ color: 'red', marginBottom: '16px' }}>{error}</div>}
+      <form onSubmit={handleRegister}>
+        <div style={{ marginBottom: '16px' }}>
+          <label style={{ display: 'block', color: '#888', marginBottom: '8px' }}>Name</label>
+          <input
+            type="text"
             value={name}
-            onChange={(e) => setName(e.target.value)}
-            style={inputStyle} 
-            autoComplete="name"
+            onChange={e => setName(e.target.value)}
+            style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #333', background: '#111', color: 'white' }}
+            required
           />
         </div>
-
-        <div style={inputGroupStyle} className={getAnimClass(3)}>
-          <label style={labelStyle} htmlFor="email">Email</label>
-          <input 
-            type="email" 
-            id="email"
+        <div style={{ marginBottom: '16px' }}>
+          <label style={{ display: 'block', color: '#888', marginBottom: '8px' }}>Email</label>
+          <input
+            type="email"
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={inputStyle} 
-            autoComplete="email"
+            onChange={e => setEmail(e.target.value)}
+            style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #333', background: '#111', color: 'white' }}
+            required
           />
         </div>
-
-        <div style={inputGroupStyle} className={getAnimClass(4)}>
-          <label style={labelStyle} htmlFor="password">Password</label>
-          <div style={{ position: 'relative' }}>
-            <input 
-              type={showPassword ? 'text' : 'password'} 
-              id="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              style={{...inputStyle, paddingRight: '48px'}} 
-              autoComplete="new-password"
-            />
-            <button 
-              type="button" 
-              onClick={() => setShowPassword(!showPassword)}
-              style={eyeButtonStyle}
-            >
-              {showPassword ? <EyeOff size={20} color="var(--text-secondary)" /> : <Eye size={20} color="var(--text-secondary)" />}
-            </button>
-          </div>
-        </div>
-
-        <div style={inputGroupStyle} className={getAnimClass(5)}>
-          <label style={labelStyle} htmlFor="confirmPassword">Confirm Password</label>
-          <input 
-            type={showPassword ? 'text' : 'password'} 
-            id="confirmPassword"
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            style={inputStyle} 
-            autoComplete="new-password"
+        <div style={{ marginBottom: '24px' }}>
+          <label style={{ display: 'block', color: '#888', marginBottom: '8px' }}>Password</label>
+          <input
+            type="password"
+            value={password}
+            onChange={e => setPassword(e.target.value)}
+            style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #333', background: '#111', color: 'white' }}
+            required
+            minLength={8}
           />
         </div>
-
-        {error && <div style={errorStyle} className={getAnimClass(6)}>{error}</div>}
-
-        <button type="submit" style={submitBtnStyle} className={`register-submit-btn ${getAnimClass(6)}`} disabled={isLoading}>
-          {isLoading ? 'CREATING ACCOUNT...' : 'CREATE ACCOUNT →'}
+        <button type="submit" style={{ width: '100%', padding: '14px', borderRadius: '8px', background: 'white', color: 'black', border: 'none', cursor: 'pointer', fontWeight: 'bold' }}>
+          Sign up
         </button>
       </form>
-
-      <div style={footerStyle} className={getAnimClass(7)}>
-        Already have an account? <Link to="/login" style={linkStyle}>Log in</Link>
+      <div style={{ marginTop: '24px', textAlign: 'center', color: '#888' }}>
+        Already have an account? <Link to="/login" style={{ color: 'white' }}>Log in</Link>
       </div>
-    </>
+    </div>
   );
-};
-
-// Extracted form styles
-const formTitleStyle: React.CSSProperties = {
-  fontFamily: 'var(--font-primary)',
-  fontSize: '1.5rem',
-  fontWeight: 600,
-  color: 'var(--text-primary)',
-  marginBottom: '32px',
-  letterSpacing: '0.02em',
-  lineHeight: '1.2',
-};
-
-const formStyle: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '24px',
-};
-
-const inputGroupStyle: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: '8px',
-};
-
-const labelStyle: React.CSSProperties = {
-  fontSize: '0.875rem',
-  fontWeight: 500,
-  color: 'var(--text-secondary)',
-};
-
-const inputStyle: React.CSSProperties = {
-  width: '100%',
-  height: '52px',
-  background: 'rgba(255, 255, 255, 0.035)',
-  border: '1px solid rgba(255, 255, 255, 0.10)',
-  borderRadius: '8px',
-  padding: '0 16px',
-  color: '#F5F3EF',
-  fontFamily: 'var(--font-secondary)',
-  fontSize: '1rem',
-  outline: 'none',
-  transition: 'border-color 0.2s',
-};
-
-const eyeButtonStyle: React.CSSProperties = {
-  position: 'absolute',
-  right: '16px',
-  top: '50%',
-  transform: 'translateY(-50%)',
-  background: 'none',
-  border: 'none',
-  cursor: 'pointer',
-  padding: 0,
-  display: 'flex',
-  alignItems: 'center',
-  justifyContent: 'center',
-};
-
-const errorStyle: React.CSSProperties = {
-  color: '#f43f5e',
-  fontSize: '0.875rem',
-  marginTop: '-16px',
-};
-
-const submitBtnStyle: React.CSSProperties = {
-  width: '100%',
-  height: '52px',
-  background: '#F5F3EF',
-  color: '#050505',
-  border: 'none',
-  borderRadius: '8px',
-  fontSize: '0.875rem',
-  fontWeight: 600,
-  fontFamily: 'var(--font-secondary)',
-  cursor: 'pointer',
-  marginTop: '8px',
-  transition: 'opacity 0.2s, transform 0.2s',
-};
-
-const footerStyle: React.CSSProperties = {
-  marginTop: '32px',
-  textAlign: 'center',
-  fontSize: '0.875rem',
-  color: 'var(--text-secondary)',
-};
-
-const linkStyle: React.CSSProperties = {
-  color: 'var(--text-primary)',
-  textDecoration: 'none',
-  fontWeight: 500,
 };

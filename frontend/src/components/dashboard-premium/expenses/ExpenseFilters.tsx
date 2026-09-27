@@ -16,7 +16,7 @@ interface ExpenseFiltersProps {
 
 const CATEGORIES = ['All categories', 'Housing', 'Food', 'Transport', 'Shopping', 'Subscriptions', 'Entertainment', 'Health', 'Education', 'Other'];
 const PAYMENT_METHODS = ['All', 'UPI', 'Card', 'Cash', 'Bank Transfer'];
-const DATE_RANGES = ['Today', 'This week', 'This month', 'Last month', 'Last 3 months', 'This year'];
+const DATE_RANGES = ['7D', '1M', '3M', '6M', '1Y'];
 
 export const ExpenseFilters: React.FC<ExpenseFiltersProps> = ({ filters, onFilterChange, onClearFilters }) => {
   const [openDropdown, setOpenDropdown] = useState<string | null>(null);
@@ -43,7 +43,7 @@ export const ExpenseFilters: React.FC<ExpenseFiltersProps> = ({ filters, onFilte
 
   const hasActiveFilters = filters.category !== 'All categories' || 
                            filters.paymentMethod !== 'All' || 
-                           filters.dateRange !== 'This month';
+                           filters.dateRange !== '1M';
 
   return (
     <>

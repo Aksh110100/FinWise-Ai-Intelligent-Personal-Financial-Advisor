@@ -1,22 +1,13 @@
 import React, { useRef, useState, useEffect } from 'react';
-import { Budget } from '../../../data/mockBudgetData';
 
 const SVG_WIDTH = 800;
 const SVG_HEIGHT = 220;
 
-const MONTHS_DATA = [
-  { month: 'MAY', budget: 60000, actual: 48200 },
-  { month: 'JUN', budget: 60000, actual: 51400 },
-  { month: 'JUL', budget: 60000, actual: 55200 },
-  { month: 'AUG', budget: 60000, actual: 42800 },
-];
-
 interface BudgetGraphProps {
-  currentTotalBudget: number;
-  currentTotalSpent: number;
+  analytics?: { label: string; budget: number; actual: number }[];
 }
 
-export const BudgetGraph: React.FC<BudgetGraphProps> = ({ currentTotalBudget, currentTotalSpent }) => {
+export const BudgetGraph: React.FC<BudgetGraphProps> = ({ analytics }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const pathBudgetRef = useRef<SVGPathElement>(null);
   const pathActualRef = useRef<SVGPathElement>(null);
@@ -34,15 +25,23 @@ export const BudgetGraph: React.FC<BudgetGraphProps> = ({ currentTotalBudget, cu
     setMounted(true);
   }, []);
 
-  const data = [...MONTHS_DATA];
-  if (currentTotalBudget > 0 || currentTotalSpent > 0) {
-    data[3] = { month: 'AUG', budget: currentTotalBudget || 60000, actual: currentTotalSpent };
+  const data = analytics && analytics.length > 0 ? analytics.map(d => ({ month: d.label, year: d.year, budget: d.budget, actual: d.actual })) : [];
+
+  if (data.length === 0) {
+    return (
+      <div className="budget-glass-panel" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '300px' }}>
+        <h3 style={{ fontFamily: 'var(--font-secondary)', fontSize: '0.85rem', letterSpacing: '0.1em', color: 'var(--text-secondary)', marginBottom: '24px' }}>
+          BUDGET VS ACTUAL
+        </h3>
+        <p style={{ color: 'var(--text-muted)' }}>No historical data available.</p>
+      </div>
+    );
   }
 
-  const maxVal = Math.max(...data.map(d => Math.max(d.budget, d.actual))) * 1.2;
+  const maxVal = Math.max(1, Math.max(...data.map(d => Math.max(d.budget, d.actual)))) * 1.2;
 
   const points = data.map((d, i) => {
-    const x = (i / (data.length - 1)) * (SVG_WIDTH - 60) + 30; // padding
+    const x = (i / Math.max(1, data.length - 1)) * (SVG_WIDTH - 60) + 30; // padding
     const yBudget = SVG_HEIGHT - (d.budget / maxVal) * SVG_HEIGHT;
     const yActual = SVG_HEIGHT - (d.actual / maxVal) * SVG_HEIGHT;
     return { x, yBudget, yActual, ...d };
@@ -184,7 +183,7 @@ export const BudgetGraph: React.FC<BudgetGraphProps> = ({ currentTotalBudget, cu
 
         {/* X-Axis labels */}
         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '12px 30px 0', color: 'var(--text-muted)', fontSize: '0.75rem', fontWeight: 600 }}>
-          {data.map(d => <span key={d.month}>{d.month}</span>)}
+          {data.map((d, i) => <span key={i}>{d.month}</span>)}
         </div>
 
         {/* Tooltip */}
@@ -207,7 +206,7 @@ export const BudgetGraph: React.FC<BudgetGraphProps> = ({ currentTotalBudget, cu
             }}
           >
             <div style={{ color: 'var(--text-primary)', fontSize: '1rem', fontWeight: 600, marginBottom: '12px', fontFamily: 'var(--font-primary)' }}>
-              {data[trackerState.dataIndex].month} 2026
+              {data[trackerState.dataIndex].month} {data[trackerState.dataIndex].year}
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
               <span style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Budget</span>

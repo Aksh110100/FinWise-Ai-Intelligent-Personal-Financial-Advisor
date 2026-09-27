@@ -25,8 +25,8 @@
   --glass-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.5);
 
   /* Typography */
-  --font-primary: "Heraka", sans-serif;
-  --font-secondary: "Werd", sans-serif;
+  --font-primary: "Outfit", sans-serif;
+  --font-secondary: "Inter", sans-serif;
   
   /* Transitions */
   --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);

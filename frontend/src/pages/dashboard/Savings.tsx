@@ -1,10 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { savingsData } from '../../data/savingsData';
+import { useSavings } from '../../hooks/useSavings';
+import { useGoals } from '../../hooks/useGoals';
+import { MoreVertical, Edit2, Trash2 } from 'lucide-react';
 import { LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, ReferenceLine, BarChart, Bar } from 'recharts';
-import { ArrowRight, X, PiggyBank, Target, TrendingUp, FileText, ChevronRight, Check } from 'lucide-react';
+import { ArrowRight, X, Target, TrendingUp, FileText, ChevronRight, Check } from 'lucide-react';
 import '../../styles/savings.css';
-
+import { getToken } from '../../utils/auth';
 // Animated Number Component
 const AnimatedNumber = ({ value, prefix = '', suffix = '' }: { value: number, prefix?: string, suffix?: string }) => {
   const [current, setCurrent] = useState(0);
@@ -74,9 +76,64 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 
 export const Savings: React.FC = () => {
   const [activeRange, setActiveRange] = useState('1Y');
+  const [activeTypeFilter, setActiveTypeFilter] = useState('ALL');
   const [activePanel, setActivePanel] = useState<string | null>(null);
   const [isClosing, setIsClosing] = useState(false);
   const [successType, setSuccessType] = useState<string | null>(null);
+
+  // API Data
+  const { savings, summary, growth, breakdown, loading, error, addSaving, updateSaving, deleteSaving } = useSavings({ range: activeRange, type: activeTypeFilter });
+  const { goals, loading: goalsLoading, error: goalsError, addGoal, deleteGoal, fetchGoals } = useGoals();
+
+  // Form State
+  const [name, setName] = useState('');
+  const [savingType, setSavingType] = useState('PERSONAL');
+  const [amount, setAmount] = useState('');
+  const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
+  const [targetAmount, setTargetAmount] = useState('');
+  const [targetDate, setTargetDate] = useState('');
+  const [note, setNote] = useState('');
+  const [goalId, setGoalId] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Edit State
+  const [editId, setEditId] = useState<string | null>(null);
+  const [activeActionMenu, setActiveActionMenu] = useState<string | null>(null);
+
+  const openEditPanel = (saving: any) => {
+    setEditId(saving.id);
+    setName(saving.name || '');
+    setSavingType(saving.type || 'PERSONAL');
+    setAmount(saving.amount.toString());
+    setDate(saving.date ? new Date(saving.date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
+    setTargetAmount(saving.targetAmount ? saving.targetAmount.toString() : '');
+    setTargetDate(saving.targetDate ? new Date(saving.targetDate).toISOString().split('T')[0] : '');
+    setNote(saving.note || '');
+    setGoalId(saving.goalId || '');
+    setActivePanel('add-saving');
+    setActiveActionMenu(null);
+  };
+
+  const openAddPanel = () => {
+    setEditId(null);
+    setName('');
+    setSavingType('PERSONAL');
+    setAmount('');
+    setDate(new Date().toISOString().split('T')[0]);
+    setTargetAmount('');
+    setTargetDate('');
+    setNote('');
+    setGoalId('');
+    setActivePanel('add-saving');
+  };
+
+  const handleDelete = async (id: string) => {
+    if (window.confirm('Are you sure you want to delete this saving?')) {
+      await deleteSaving(id);
+      fetchGoals();
+    }
+    setActiveActionMenu(null);
+  };
 
   const closePanel = () => {
     setIsClosing(true);
@@ -84,14 +141,110 @@ export const Savings: React.FC = () => {
       setActivePanel(null);
       setIsClosing(false);
       setSuccessType(null);
+      setEditId(null);
+      setName('');
+      setSavingType('PERSONAL');
+      setAmount('');
+      setDate(new Date().toISOString().split('T')[0]);
+      setTargetAmount('');
+      setTargetDate('');
+      setNote('');
     }, 400);
   };
 
-  const handleSuccessAction = (type: string) => {
-    setSuccessType(type);
-    setTimeout(() => {
-      closePanel();
-    }, 2000);
+  const handleSuccessAction = async (type: string) => {
+    if (type === 'goal') {
+      if (!name.trim()) return alert('Goal name is required.');
+      if (!targetAmount || Number(targetAmount) <= 0) return alert('Target amount must be greater than zero.');
+
+      const payload: any = {
+        name: name.trim(),
+        targetAmount: Number(targetAmount),
+      };
+      
+      if (note.trim()) payload.description = note.trim();
+      if (targetDate) payload.targetDate = targetDate;
+      if (savingType) payload.category = savingType;
+
+      try {
+        setIsSubmitting(true);
+        await addGoal(payload);
+        setSuccessType(type);
+        setTimeout(() => {
+          closePanel();
+        }, 2000);
+      } catch (e: any) {
+        alert(e.message || 'Error saving goal');
+      } finally {
+        setIsSubmitting(false);
+      }
+    } else if (type === 'saving') {
+      if (!name.trim()) return alert('Saving name is required.');
+      if (!amount || Number(amount) <= 0) return alert('Amount must be greater than zero.');
+      if (targetAmount && Number(targetAmount) < 0) return alert('Target amount must be greater than or equal to zero.');
+      
+      const payload: any = {
+        name: name.trim(),
+        amount: Number(amount),
+        date: date || new Date().toISOString().split('T')[0],
+        type: savingType,
+        source: 'OTHER',
+      };
+      
+      if (note.trim()) payload.note = note.trim();
+      if (goalId) payload.goalId = goalId;
+      if (targetAmount && Number(targetAmount) > 0) payload.targetAmount = Number(targetAmount);
+      if (targetDate) payload.targetDate = targetDate;
+      else if (targetAmount && !targetDate) payload.targetDate = null; // allow nulling target date
+
+      try {
+        setIsSubmitting(true);
+        if (editId) {
+          await updateSaving(editId, payload);
+        } else {
+          await addSaving(payload);
+        }
+        fetchGoals();
+        setSuccessType(type);
+        setTimeout(() => {
+          closePanel();
+        }, 2000);
+      } catch (e: any) {
+        alert(e.message || 'Error saving data');
+      } finally {
+        setIsSubmitting(false);
+      }
+    } else if (type === 'report') {
+      try {
+        setIsSubmitting(true);
+        const token = getToken();
+        const response = await fetch('http://localhost:5000/api/savings/report/pdf', {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+        
+        if (!response.ok) {
+          throw new Error('Failed to generate report');
+        }
+        
+        const blob = await response.blob();
+        const url = window.URL.createObjectURL(blob);
+        window.open(url, '_blank');
+        
+        setSuccessType(type);
+        setTimeout(() => {
+          closePanel();
+        }, 2000);
+      } catch (e: any) {
+        alert(e.message || 'Error downloading report');
+      } finally {
+        setIsSubmitting(false);
+      }
+    } else {
+      setSuccessType(type);
+      setTimeout(() => {
+        closePanel();
+      }, 2000);
+    }
   };
   
   // Simulator state
@@ -100,7 +253,7 @@ export const Savings: React.FC = () => {
   const currentGoalMonths = Math.max(1, baseGoalMonths - Math.floor(simulatorValue / 1000));
   const monthsSaved = baseGoalMonths - currentGoalMonths;
 
-  const currentGraphData = savingsData.growthData[activeRange as keyof typeof savingsData.growthData] || savingsData.growthData['1Y'];
+  const currentGraphData = growth.length > 0 ? growth : [];
 
   return (
     <div className="savings-dashboard-wrapper">
@@ -116,17 +269,39 @@ export const Savings: React.FC = () => {
               <h1 className="header-title">SAVINGS</h1>
               <p className="header-subtext" style={{letterSpacing: '0.05em'}}>Track your savings, understand your progress, and see where your money could take you.</p>
             </div>
-            <div className="header-date">
-              <span className="date-badge" style={{color: 'var(--text-positive)', background: 'rgba(46, 204, 113, 0.1)'}}>THIS MONTH</span>
-              <span className="date-month" style={{color: 'var(--text-primary)', fontSize: '1.25rem'}}>+₹30,800</span>
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '12px' }}>
+              <button
+                onClick={openAddPanel}
+                style={{
+                  background: 'var(--accent-gold)',
+                  color: 'var(--bg-primary)',
+                  border: 'none',
+                  padding: '12px 24px',
+                  borderRadius: '6px',
+                  fontFamily: 'var(--font-secondary)',
+                  fontWeight: 600,
+                  fontSize: '0.85rem',
+                  cursor: 'pointer',
+                  transition: 'var(--transition-smooth)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  whiteSpace: 'nowrap',
+                }}
+              >
+                + ADD SAVING
+              </button>
+              <div className="header-date">
+                <span className="date-badge" style={{color: 'var(--text-positive)', background: 'rgba(46, 204, 113, 0.1)'}}>THIS MONTH</span>
+                <span className="date-month" style={{color: 'var(--text-primary)', fontSize: '1.25rem'}}>
+                  +{summary ? `₹${summary.thisMonthTotal.toLocaleString('en-IN')}` : '₹0'}
+                </span>
+              </div>
             </div>
           </div>
           
+          {/* Quick Actions — secondary buttons */}
           <div style={{ display: 'flex', gap: '16px' }}>
-            <button className="dashboard-quick-btn" onClick={() => setActivePanel('add-saving')}>
-              <PiggyBank size={16} />
-              <span>ADD SAVING</span>
-            </button>
             <button className="dashboard-quick-btn" onClick={() => setActivePanel('set-goal')}>
               <Target size={16} />
               <span>SET SAVINGS GOAL</span>
@@ -148,19 +323,27 @@ export const Savings: React.FC = () => {
         <div className="kpi-grid anim-fade-up delay-2">
           <div className="glass-card kpi-card savings-metric-card">
             <div className="kpi-title">TOTAL SAVED</div>
-            <div className="kpi-value"><AnimatedNumber value={savingsData.summary.totalSavedThisMonth} prefix="₹" /></div>
+            <div className="kpi-value">
+              {summary ? <AnimatedNumber value={summary.totalAllTime} prefix="₹" /> : '₹0'}
+            </div>
           </div>
           <div className="glass-card kpi-card savings-metric-card">
-            <div className="kpi-title">SAVINGS RATE</div>
-            <div className="kpi-value"><AnimatedNumber value={savingsData.summary.savingsRate} suffix="%" /></div>
+            <div className="kpi-title">AVG MONTHLY</div>
+            <div className="kpi-value">
+              {summary ? <AnimatedNumber value={summary.avgMonthly} prefix="₹" /> : '₹0'}
+            </div>
           </div>
           <div className="glass-card kpi-card savings-metric-card">
             <div className="kpi-title">MONTHLY CHANGE</div>
-            <div className="kpi-value" style={{color: 'var(--text-positive)'}}>+{savingsData.summary.monthlyChange}%</div>
+            <div className="kpi-value" style={{color: summary?.monthlyChangePct >= 0 ? 'var(--text-positive)' : 'var(--text-negative)'}}>
+              {summary?.monthlyChangePct > 0 ? '+' : ''}{summary?.monthlyChangePct || 0}%
+            </div>
           </div>
           <div className="glass-card kpi-card savings-metric-card">
             <div className="kpi-title">PROJECTED YEAR</div>
-            <div className="kpi-value" style={{color: 'var(--accent-gold)'}}>₹1,72,000</div>
+            <div className="kpi-value" style={{color: 'var(--accent-gold)'}}>
+              ₹{summary ? (summary.avgMonthly * 12).toLocaleString('en-IN') : '0'}
+            </div>
           </div>
         </div>
 
@@ -216,58 +399,101 @@ export const Savings: React.FC = () => {
 
           {/* RIGHT: HEALTH & FORECAST */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '24px' }}>
-            
             {/* Health */}
-            <div className="glass-card" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-              <div className="card-title" style={{ alignSelf: 'flex-start' }}>SAVINGS HEALTH</div>
-              <div className="health-ring-container" style={{ width: '120px', height: '120px', marginBottom: '16px' }}>
-                <svg viewBox="0 0 100 100" style={{ width: '100%', height: '100%', transform: 'rotate(-90deg)' }}>
-                  <circle cx="50" cy="50" r="45" fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="8" />
-                  <circle cx="50" cy="50" r="45" fill="none" stroke="var(--accent-gold)" strokeWidth="8" strokeDasharray="283" strokeDashoffset="283" style={{ animation: 'dash 1.5s ease-out forwards' }} />
-                </svg>
-                <div className="health-score-text">
-                  <div className="health-num" style={{fontSize: '2rem'}}>36<span style={{fontSize:'1rem'}}>.2%</span></div>
-                  <div style={{fontSize: '0.6rem', color: 'var(--text-secondary)', letterSpacing: '0.1em', marginTop: '2px'}}>RATE</div>
-                </div>
-              </div>
-              <div style={{ display: 'flex', width: '100%', justifyContent: 'space-between', padding: '0 16px', fontSize: '0.75rem' }}>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                  <span style={{color: 'var(--text-secondary)'}}>TARGET</span>
-                  <span style={{fontWeight: 600}}>40%</span>
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '4px', textAlign: 'right' }}>
-                  <span style={{color: 'var(--text-secondary)'}}>STATUS</span>
-                  <span style={{color: 'var(--text-positive)', fontWeight: 600}}>ON TRACK</span>
-                </div>
-              </div>
+            <div className="glass-card" style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
+              <div style={{ color: 'var(--text-secondary)', marginBottom: '16px', fontSize: '0.85rem', fontWeight: 600, letterSpacing: '0.1em' }}>SAVINGS HEALTH</div>
+              
+              {(() => {
+                const firstGoal = goals && goals.length > 0 ? goals[0] : null;
+                const hasTarget = !!firstGoal && firstGoal.targetAmount > 0;
+                
+                if (!hasTarget) {
+                  return (
+                    <div style={{ textAlign: 'center', margin: 'auto 0' }}>
+                      <div style={{ fontSize: '2.5rem', fontFamily: 'var(--font-primary)', color: 'var(--text-muted)' }}>—</div>
+                      <div style={{ fontSize: '1rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>NO TARGET</div>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Create a savings goal to track your progress.</div>
+                    </div>
+                  );
+                }
+
+                const healthScore = Math.floor(firstGoal.progress || 0);
+                let healthStatus = 'BUILDING';
+                if (healthScore >= 100) healthStatus = 'GOAL REACHED';
+                else if (healthScore >= 50) healthStatus = 'ON TRACK';
+
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        <span style={{ fontSize: '2.5rem', fontFamily: 'var(--font-primary)', color: 'var(--text-primary)', lineHeight: 1 }}>{healthScore}%</span>
+                        <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: '4px' }}>HEALTH</span>
+                      </div>
+                    </div>
+                    
+                    <div style={{ marginTop: 'auto' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                        <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Target</span>
+                        <span style={{ fontSize: '0.85rem', color: 'var(--text-primary)' }}>₹{(firstGoal.savedAmount || 0).toLocaleString('en-IN')} / ₹{firstGoal.targetAmount.toLocaleString('en-IN')}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ fontSize: '0.85rem', color: 'var(--text-secondary)' }}>Status</span>
+                        <span style={{ fontSize: '0.85rem', color: healthScore >= 50 ? 'var(--text-positive)' : 'var(--text-primary)', fontWeight: 500 }}>{healthStatus}</span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
 
             {/* Forecast */}
-            <div className="glass-card" style={{ flex: 1 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                <div className="card-title" style={{marginBottom: 0}}>SAVINGS FORECAST</div>
-                <div className="date-badge" style={{background: 'rgba(201, 164, 108, 0.1)', color: 'var(--accent-gold)'}}>AI DEMO</div>
-              </div>
+            <div className="glass-card" style={{ flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: '24px' }}>
+              <div style={{ color: 'var(--text-secondary)', marginBottom: '16px', fontSize: '0.85rem', fontWeight: 600, letterSpacing: '0.1em' }}>SAVINGS FORECAST</div>
               
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', marginBottom: '16px', color: 'var(--text-secondary)' }}>
-                <span>CURRENT: <strong style={{color: 'var(--text-primary)'}}>₹86K</strong></span>
-                <span>12 MO: <strong style={{color: 'var(--accent-gold)'}}>₹172K</strong></span>
-              </div>
-              
-              <div style={{ height: '80px', width: '100%' }}>
-                <ResponsiveContainer width="100%" height="100%">
-                  <AreaChart data={savingsData.forecast.historical.concat(savingsData.forecast.future.slice(1, 13))} margin={{top:5, right:0, left:0, bottom:0}}>
-                     <defs>
-                      <linearGradient id="colorForecast" x1="0" y1="0" x2="0" y2="1">
-                        <stop offset="5%" stopColor="var(--accent-gold)" stopOpacity={0.3}/>
-                        <stop offset="95%" stopColor="var(--accent-gold)" stopOpacity={0}/>
-                      </linearGradient>
-                    </defs>
-                    <Area type="monotone" dataKey="projected" stroke="var(--accent-gold)" strokeDasharray="3 3" fillOpacity={1} fill="url(#colorForecast)" />
-                    <Area type="monotone" dataKey="current" stroke="var(--text-primary)" fillOpacity={0} />
-                  </AreaChart>
-                </ResponsiveContainer>
-              </div>
+              {(() => {
+                const hasEnoughData = summary && summary.totalCount > 1;
+                
+                if (!hasEnoughData) {
+                  return (
+                    <div style={{ textAlign: 'center', margin: 'auto 0' }}>
+                      <div style={{ fontSize: '1rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>Not enough data yet</div>
+                      <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Keep recording savings to generate a meaningful forecast.</div>
+                    </div>
+                  );
+                }
+
+                const currentSaved = summary.totalAllTime || 0;
+                const projectedAdditional = (summary.avgMonthly || 0) * 12;
+                
+                return (
+                  <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '16px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column' }}>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Current savings</span>
+                        <span style={{ fontSize: '1.2rem', color: 'var(--text-primary)', fontWeight: 600 }}>₹{currentSaved.toLocaleString('en-IN')}</span>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', textAlign: 'right' }}>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Projected additional (12m)</span>
+                        <span style={{ fontSize: '1.2rem', color: 'var(--accent-gold)', fontWeight: 600 }}>+₹{projectedAdditional.toLocaleString('en-IN')}</span>
+                      </div>
+                    </div>
+                    
+                    <div style={{ flex: 1, minHeight: '80px', marginTop: '8px' }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={[
+                          { name: 'Now', actual: currentSaved, projected: currentSaved },
+                          { name: '+12m', projected: currentSaved + projectedAdditional }
+                        ]} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
+                          <XAxis dataKey="name" hide />
+                          <YAxis hide domain={['dataMin', 'dataMax']} />
+                          <Line type="monotone" dataKey="actual" stroke="var(--text-primary)" strokeWidth={2} dot={{ r: 4, fill: 'var(--bg-primary)', stroke: 'var(--text-primary)', strokeWidth: 2 }} />
+                          <Line type="monotone" dataKey="projected" stroke="var(--accent-gold)" strokeDasharray="4 4" strokeWidth={2} dot={{ r: 4, fill: 'var(--bg-primary)', stroke: 'var(--accent-gold)', strokeWidth: 2 }} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </div>
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -276,45 +502,150 @@ export const Savings: React.FC = () => {
         <div className="dashboard-row-bottom anim-fade-up delay-4" style={{gridTemplateColumns: '1fr 1fr'}}>
           
           {/* Breakdown */}
-          <div className="glass-card">
+          <div className="glass-card" style={{ flex: 1 }}>
             <div className="card-title">WHERE YOUR SAVINGS CAME FROM</div>
             <div className="breakdown-list" style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginTop: '24px' }}>
-              {savingsData.breakdown.map((b, i) => (
+              {breakdown && breakdown.length > 0 ? breakdown.map((b: any, i: number) => (
                 <div key={i} style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
                   <div style={{ width: '140px', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>{b.label}</div>
                   <div style={{ flex: 1, height: '4px', background: 'rgba(255,255,255,0.05)', borderRadius: '2px', position: 'relative' }}>
-                    <div className="anim-width" style={{ position: 'absolute', left: 0, top: 0, height: '100%', background: 'var(--text-positive)', width: `${(b.impact/5000)*100}%`, borderRadius: '2px' }}></div>
+                    <div className="anim-width" style={{ position: 'absolute', left: 0, top: 0, height: '100%', background: 'var(--text-positive)', width: `${Math.min(100, (b.impact/ (summary?.thisMonthTotal || 1)) * 100)}%`, borderRadius: '2px' }}></div>
                   </div>
-                  <div style={{ width: '60px', textAlign: 'right', fontSize: '0.875rem', color: 'var(--text-primary)', fontWeight: 600 }}>
+                  <div style={{ width: '80px', textAlign: 'right', fontSize: '0.875rem', color: 'var(--text-primary)', fontWeight: 600 }}>
                     +₹{b.impact.toLocaleString('en-IN')}
                   </div>
                 </div>
-              ))}
+              )) : (
+                <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>No data available for this period.</div>
+              )}
             </div>
           </div>
 
           {/* Goals */}
-          <div className="glass-card">
+          <div className="glass-card" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
             <div className="card-title">SAVINGS GOALS</div>
-            <div className="goals-list" style={{ marginTop: '24px', gap: '20px' }}>
-              {savingsData.goals.map(g => {
-                const pct = Math.round((g.current / g.target) * 100);
-                return (
-                  <div key={g.id} className="goal-item-compact" onClick={() => setActivePanel('goal-' + g.id)} style={{ cursor: 'pointer' }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                      <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-primary)', letterSpacing: '0.05em' }}>{g.title}</span>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>{pct}%</span>
+            <div className="goals-list" style={{ marginTop: '24px', gap: '20px', display: 'flex', flexDirection: 'column' }}>
+              {goalsLoading ? (
+                <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Loading goals...</div>
+              ) : goalsError ? (
+                <div style={{ color: 'var(--text-negative)', fontSize: '0.85rem' }}>Error loading goals</div>
+              ) : goals && goals.length > 0 ? (
+                goals.map((g: any) => (
+                  <div key={g.id} style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ fontSize: '0.9rem', fontWeight: 600 }}>{g.name}</div>
+                      <div style={{ fontSize: '0.9rem', fontWeight: 600 }}>₹{(g.targetAmount).toLocaleString('en-IN')}</div>
                     </div>
-                    <div style={{ width: '100%', height: '3px', background: 'rgba(255,255,255,0.05)', borderRadius: '2px', marginBottom: '8px', position: 'relative' }}>
-                      <div className="anim-width" style={{ position: 'absolute', left: 0, top: 0, height: '100%', background: 'var(--accent-gold)', width: `${pct}%`, borderRadius: '2px' }}></div>
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
-                      <span>₹{g.current.toLocaleString('en-IN')} / ₹{g.target.toLocaleString('en-IN')}</span>
-                      <span>{g.date}</span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                      <div style={{ flex: 1, height: '6px', background: 'rgba(255,255,255,0.05)', borderRadius: '3px', position: 'relative' }}>
+                        <div className="anim-width" style={{ position: 'absolute', left: 0, top: 0, height: '100%', background: 'var(--text-positive)', width: `${g.progress}%`, borderRadius: '3px' }}></div>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', minWidth: '70px' }}>
+                        <div style={{ fontSize: '0.85rem', color: 'var(--text-primary)', fontWeight: 500 }}>{Math.floor(g.progress)}%</div>
+                        <div style={{ fontSize: '0.7rem', color: 'var(--text-secondary)' }}>₹{(g.savedAmount || 0).toLocaleString('en-IN')} saved</div>
+                      </div>
                     </div>
                   </div>
-                );
-              })}
+                ))
+              ) : (
+                <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
+                  No savings goals yet.<br/><br/>Set a savings goal to start tracking your progress.
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* RECENT SAVINGS LIST */}
+        <div className="dashboard-row-1 anim-fade-up delay-5" style={{ marginTop: '24px' }}>
+          <div className="glass-card">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <div className="card-title" style={{marginBottom: 0}}>RECENT SAVINGS</div>
+              <select 
+                value={activeTypeFilter}
+                onChange={(e) => setActiveTypeFilter(e.target.value)}
+                style={{ 
+                  background: 'rgba(255,255,255,0.03)', 
+                  border: '1px solid rgba(255,255,255,0.1)', 
+                  borderRadius: '6px', 
+                  color: 'var(--text-primary)', 
+                  padding: '6px 12px', 
+                  fontSize: '0.8rem', 
+                  outline: 'none',
+                  cursor: 'pointer'
+                }}
+              >
+                <option value="ALL">All Types</option>
+                <option value="EMERGENCY">Emergency</option>
+                <option value="TRAVEL">Travel</option>
+                <option value="EDUCATION">Education</option>
+                <option value="VEHICLE">Vehicle</option>
+                <option value="HOME">Home</option>
+                <option value="RETIREMENT">Retirement</option>
+                <option value="PERSONAL">Personal</option>
+                <option value="OTHER">Other</option>
+              </select>
+            </div>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {savings && savings.length > 0 ? savings.map((saving: any) => (
+                <div key={saving.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '16px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px' }}>
+                  <div style={{ flex: 1 }}>
+                    <div style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{saving.name || 'Unnamed Saving'}</div>
+                    <div style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginTop: '4px' }}>
+                      <span style={{ color: 'var(--accent-gold)' }}>{saving.type ? saving.type.charAt(0) + saving.type.slice(1).toLowerCase() : 'Other'}</span> • {new Date(saving.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
+                    </div>
+                    {saving.note && <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: '2px' }}>{saving.note}</div>}
+                  </div>
+                  
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '32px' }}>
+                    {saving.targetAmount && (
+                      <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                        <div style={{ color: 'var(--text-secondary)', fontSize: '0.7rem', marginBottom: '4px' }}>Goal Progress</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <div style={{ width: '60px', height: '4px', background: 'rgba(255,255,255,0.1)', borderRadius: '2px', overflow: 'hidden' }}>
+                            <div style={{ width: `${Math.min(100, (Number(saving.amount) / Number(saving.targetAmount)) * 100)}%`, height: '100%', background: 'var(--accent-gold)' }} />
+                          </div>
+                          <div style={{ color: 'var(--text-primary)', fontSize: '0.8rem' }}>
+                            {Math.round(Math.min(100, (Number(saving.amount) / Number(saving.targetAmount)) * 100))}%
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    <div style={{ color: 'var(--text-positive)', fontWeight: 600, fontSize: '1.1rem' }}>
+                      +₹{Number(saving.amount).toLocaleString('en-IN')}
+                    </div>
+                    
+                    <div style={{ position: 'relative' }}>
+                      <button 
+                        onClick={() => setActiveActionMenu(activeActionMenu === saving.id ? null : saving.id)}
+                        style={{ background: 'none', border: 'none', color: 'var(--text-secondary)', cursor: 'pointer', padding: '4px' }}
+                      >
+                        <MoreVertical size={16} />
+                      </button>
+                      
+                      {activeActionMenu === saving.id && (
+                        <div style={{ position: 'absolute', right: 0, top: '100%', background: 'var(--bg-tertiary)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', padding: '4px', zIndex: 100, minWidth: '120px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                          <button 
+                            onClick={() => openEditPanel(saving)}
+                            style={{ background: 'none', border: 'none', color: 'var(--text-primary)', padding: '8px 12px', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}
+                          >
+                            <Edit2 size={14} /> Edit
+                          </button>
+                          <button 
+                            onClick={() => handleDelete(saving.id)}
+                            style={{ background: 'none', border: 'none', color: 'var(--text-negative)', padding: '8px 12px', textAlign: 'left', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontSize: '0.85rem' }}
+                          >
+                            <Trash2 size={14} /> Delete
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )) : (
+                <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>No savings recorded yet.</div>
+              )}
             </div>
           </div>
         </div>
@@ -394,8 +725,8 @@ export const Savings: React.FC = () => {
               <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Monthly Savings</span>
               <div style={{ flex: 1, marginTop: '8px' }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={savingsData.forecast.historical.slice(-6)} margin={{top:10, right:0, left:0, bottom:0}}>
-                    <Bar dataKey="current" fill="rgba(255,255,255,0.2)" radius={[2, 2, 0, 0]} />
+                  <BarChart data={growth.slice(-6)} margin={{top:10, right:0, left:0, bottom:0}}>
+                    <Bar dataKey="saved" fill="rgba(255,255,255,0.2)" radius={[2, 2, 0, 0]} />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -404,7 +735,7 @@ export const Savings: React.FC = () => {
               <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Cumulative Savings</span>
               <div style={{ flex: 1, marginTop: '8px' }}>
                 <ResponsiveContainer width="100%" height="100%">
-                  <LineChart data={savingsData.growthData['6M']} margin={{top:10, right:0, left:0, bottom:0}}>
+                  <LineChart data={growth} margin={{top:10, right:0, left:0, bottom:0}}>
                     <Line type="monotone" dataKey="saved" stroke="var(--text-positive)" strokeWidth={2} dot={false} />
                   </LineChart>
                 </ResponsiveContainer>
@@ -513,23 +844,119 @@ export const Savings: React.FC = () => {
               <div className="qa-panel-content" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                 {successType !== 'saving' ? (
                   <>
-                    <h2 style={{ fontFamily: 'var(--font-primary)', fontSize: '1.5rem', marginBottom: '40px', textTransform: 'uppercase' }}>RECORD NEW SAVING</h2>
+                    <h2 style={{ fontFamily: 'var(--font-primary)', fontSize: '1.5rem', marginBottom: '40px', textTransform: 'uppercase' }}>
+                      {editId ? 'EDIT SAVING' : 'RECORD NEW SAVING'}
+                    </h2>
                     
+                    <div style={{ marginBottom: '24px' }}>
+                      <label style={{ display: 'block', fontSize: '0.75rem', letterSpacing: '0.1em', color: 'var(--text-secondary)', marginBottom: '12px' }}>SAVING NAME</label>
+                      <input 
+                        type="text" 
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        style={{ width: '100%', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: 'var(--text-primary)', padding: '12px', fontSize: '0.9rem', outline: 'none' }} 
+                        placeholder="e.g. Emergency Fund" 
+                      />
+                    </div>
+
+                    <div style={{ marginBottom: '24px' }}>
+                      <label style={{ display: 'block', fontSize: '0.75rem', letterSpacing: '0.1em', color: 'var(--text-secondary)', marginBottom: '12px' }}>SAVING TYPE</label>
+                      <select 
+                        value={savingType}
+                        onChange={(e) => setSavingType(e.target.value)}
+                        style={{ width: '100%', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: 'var(--text-primary)', padding: '12px', fontSize: '0.9rem', outline: 'none', appearance: 'none' }} 
+                      >
+                        <option value="EMERGENCY">Emergency</option>
+                        <option value="TRAVEL">Travel</option>
+                        <option value="EDUCATION">Education</option>
+                        <option value="VEHICLE">Vehicle</option>
+                        <option value="HOME">Home</option>
+                        <option value="RETIREMENT">Retirement</option>
+                        <option value="PERSONAL">Personal</option>
+                        <option value="OTHER">Other</option>
+                      </select>
+                    </div>
+
                     <div style={{ marginBottom: '24px' }}>
                       <label style={{ display: 'block', fontSize: '0.75rem', letterSpacing: '0.1em', color: 'var(--text-secondary)', marginBottom: '12px' }}>AMOUNT</label>
                       <div style={{ position: 'relative' }}>
                         <span style={{ position: 'absolute', left: '0', top: '2px', color: 'var(--text-muted)', fontSize: '1.5rem', fontFamily: 'var(--font-primary)' }}>₹</span>
-                        <input type="text" style={{ width: '100%', background: 'transparent', border: 'none', borderBottom: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-primary)', fontSize: '1.5rem', fontFamily: 'var(--font-primary)', padding: '4px 0 4px 32px', outline: 'none' }} placeholder="0.00" />
+                        <input 
+                          type="number" 
+                          value={amount}
+                          onChange={(e) => setAmount(e.target.value)}
+                          style={{ width: '100%', background: 'transparent', border: 'none', borderBottom: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-primary)', fontSize: '1.5rem', fontFamily: 'var(--font-primary)', padding: '4px 0 4px 32px', outline: 'none' }} 
+                          placeholder="0.00" 
+                        />
                       </div>
                     </div>
 
                     <div style={{ marginBottom: '24px' }}>
-                      <label style={{ display: 'block', fontSize: '0.75rem', letterSpacing: '0.1em', color: 'var(--text-secondary)', marginBottom: '12px' }}>SOURCE / NOTE</label>
-                      <input type="text" style={{ width: '100%', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: 'var(--text-primary)', padding: '12px', fontSize: '0.9rem', outline: 'none' }} placeholder="e.g. Salary, Bonus, Reduced Expenses" />
+                      <label style={{ display: 'block', fontSize: '0.75rem', letterSpacing: '0.1em', color: 'var(--text-secondary)', marginBottom: '12px' }}>DATE</label>
+                      <input 
+                        type="date" 
+                        value={date}
+                        onChange={(e) => setDate(e.target.value)}
+                        style={{ width: '100%', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: 'var(--text-primary)', padding: '12px', fontSize: '0.9rem', outline: 'none' }} 
+                      />
                     </div>
 
-                    <button className="ai-action-btn" style={{ marginTop: 'auto', background: 'var(--text-primary)', color: '#000', justifyContent: 'center' }} onClick={() => handleSuccessAction('saving')}>
-                      CONFIRM SAVING
+                    <div style={{ marginBottom: '24px' }}>
+                      <label style={{ display: 'block', fontSize: '0.75rem', letterSpacing: '0.1em', color: 'var(--text-secondary)', marginBottom: '12px' }}>LINK TO GOAL (OPTIONAL)</label>
+                      <select 
+                        value={goalId}
+                        onChange={(e) => setGoalId(e.target.value)}
+                        style={{ width: '100%', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: 'var(--text-primary)', padding: '12px', fontSize: '0.9rem', outline: 'none', appearance: 'none' }} 
+                      >
+                        <option value="">-- No Goal --</option>
+                        {goals?.map((g: any) => (
+                          <option key={g.id} value={g.id}>{g.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div style={{ marginBottom: '24px' }}>
+                      <label style={{ display: 'block', fontSize: '0.75rem', letterSpacing: '0.1em', color: 'var(--text-secondary)', marginBottom: '12px' }}>TARGET AMOUNT (OPTIONAL)</label>
+                      <div style={{ position: 'relative' }}>
+                        <span style={{ position: 'absolute', left: '12px', top: '12px', color: 'var(--text-muted)', fontSize: '0.9rem', fontFamily: 'var(--font-primary)' }}>₹</span>
+                        <input 
+                          type="number" 
+                          value={targetAmount}
+                          onChange={(e) => setTargetAmount(e.target.value)}
+                          style={{ width: '100%', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: 'var(--text-primary)', padding: '12px 12px 12px 28px', fontSize: '0.9rem', outline: 'none' }} 
+                          placeholder="0.00" 
+                        />
+                      </div>
+                    </div>
+
+                    <div style={{ marginBottom: '24px' }}>
+                      <label style={{ display: 'block', fontSize: '0.75rem', letterSpacing: '0.1em', color: 'var(--text-secondary)', marginBottom: '12px' }}>TARGET DATE (OPTIONAL)</label>
+                      <input 
+                        type="date" 
+                        value={targetDate}
+                        onChange={(e) => setTargetDate(e.target.value)}
+                        style={{ width: '100%', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: 'var(--text-primary)', padding: '12px', fontSize: '0.9rem', outline: 'none' }} 
+                      />
+                    </div>
+
+                    <div style={{ marginBottom: '24px' }}>
+                      <label style={{ display: 'block', fontSize: '0.75rem', letterSpacing: '0.1em', color: 'var(--text-secondary)', marginBottom: '12px' }}>SOURCE / NOTE</label>
+                      <input 
+                        type="text" 
+                        value={note}
+                        onChange={(e) => setNote(e.target.value)}
+                        style={{ width: '100%', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: 'var(--text-primary)', padding: '12px', fontSize: '0.9rem', outline: 'none' }} 
+                        placeholder="e.g. Salary, Bonus, Reduced Expenses" 
+                      />
+                    </div>
+
+                    <button 
+                      className="ai-action-btn" 
+                      style={{ marginTop: 'auto', background: 'var(--text-primary)', color: '#000', justifyContent: 'center', opacity: isSubmitting ? 0.7 : 1 }} 
+                      onClick={() => handleSuccessAction('saving')}
+                      disabled={isSubmitting}
+                    >
+                      {isSubmitting ? 'SAVING...' : (editId ? 'SAVE CHANGES' : 'CONFIRM SAVING')}
                     </button>
                   </>
                 ) : (
@@ -555,19 +982,36 @@ export const Savings: React.FC = () => {
                     
                     <div style={{ marginBottom: '24px' }}>
                       <label style={{ display: 'block', fontSize: '0.75rem', letterSpacing: '0.1em', color: 'var(--text-secondary)', marginBottom: '12px' }}>GOAL NAME</label>
-                      <input type="text" style={{ width: '100%', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: 'var(--text-primary)', padding: '12px', fontSize: '0.9rem', outline: 'none' }} placeholder="e.g. New Car, Vacation" />
+                      <input 
+                        type="text" 
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        style={{ width: '100%', background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.1)', borderRadius: '6px', color: 'var(--text-primary)', padding: '12px', fontSize: '0.9rem', outline: 'none' }} 
+                        placeholder="e.g. New Car, Vacation" 
+                      />
                     </div>
 
                     <div style={{ marginBottom: '24px' }}>
                       <label style={{ display: 'block', fontSize: '0.75rem', letterSpacing: '0.1em', color: 'var(--text-secondary)', marginBottom: '12px' }}>TARGET AMOUNT</label>
                       <div style={{ position: 'relative' }}>
                         <span style={{ position: 'absolute', left: '0', top: '2px', color: 'var(--text-muted)', fontSize: '1.5rem', fontFamily: 'var(--font-primary)' }}>₹</span>
-                        <input type="text" style={{ width: '100%', background: 'transparent', border: 'none', borderBottom: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-primary)', fontSize: '1.5rem', fontFamily: 'var(--font-primary)', padding: '4px 0 4px 32px', outline: 'none' }} placeholder="0.00" />
+                        <input 
+                          type="number" 
+                          value={targetAmount}
+                          onChange={(e) => setTargetAmount(e.target.value)}
+                          style={{ width: '100%', background: 'transparent', border: 'none', borderBottom: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-primary)', fontSize: '1.5rem', fontFamily: 'var(--font-primary)', padding: '4px 0 4px 32px', outline: 'none' }} 
+                          placeholder="0.00" 
+                        />
                       </div>
                     </div>
 
-                    <button className="ai-action-btn" style={{ marginTop: 'auto', background: 'var(--accent-gold)', color: '#000', justifyContent: 'center' }} onClick={() => handleSuccessAction('goal')}>
-                      CREATE GOAL
+                    <button 
+                      className="ai-action-btn" 
+                      style={{ marginTop: 'auto', background: 'var(--accent-gold)', color: '#000', justifyContent: 'center', opacity: isSubmitting ? 0.7 : 1 }} 
+                      onClick={() => handleSuccessAction('goal')}
+                      disabled={isSubmitting}
+                    >
+                      {isSubmitting ? 'CREATING...' : 'CREATE GOAL'}
                     </button>
                   </>
                 ) : (

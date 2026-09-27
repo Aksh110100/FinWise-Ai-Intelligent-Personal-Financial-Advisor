@@ -5,7 +5,7 @@ import {
 } from 'recharts';
 import { 
   TrendingUp, ArrowRight, X, AlertCircle, CheckCircle, Search, 
-  Plus, Target, PieChart as PieChartIcon, ShieldAlert 
+  Target, PieChart as PieChartIcon, ShieldAlert 
 } from 'lucide-react';
 import { investmentData } from '../../data/investmentData';
 import '../../styles/investments.css';
@@ -112,21 +112,40 @@ export default function Investments() {
               Understand your portfolio, track growth,<br/>and plan where your money goes next.
             </p>
           </div>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', letterSpacing: '0.1em', marginBottom: '4px' }}>PORTFOLIO VALUE</div>
-            <div style={{ fontFamily: 'var(--font-primary)', fontSize: '2rem', color: 'var(--accent-gold)' }}>₹{investmentData.summary.currentValue.toLocaleString()}</div>
-            <div style={{ color: 'var(--text-positive)', fontSize: '0.875rem', marginTop: '4px' }}>
-              +₹{investmentData.summary.thisMonthReturn.toLocaleString()} (+{investmentData.summary.thisMonthPercentage}% this month)
+          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '12px' }}>
+            <button
+              onClick={() => setActivePanel('add')}
+              style={{
+                background: 'var(--accent-gold)',
+                color: 'var(--bg-primary)',
+                border: 'none',
+                padding: '12px 24px',
+                borderRadius: '6px',
+                fontFamily: 'var(--font-secondary)',
+                fontWeight: 600,
+                fontSize: '0.85rem',
+                cursor: 'pointer',
+                transition: 'var(--transition-smooth)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                whiteSpace: 'nowrap',
+              }}
+            >
+              + ADD INVESTMENT
+            </button>
+            <div style={{ textAlign: 'right' }}>
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', letterSpacing: '0.1em', marginBottom: '4px' }}>PORTFOLIO VALUE</div>
+              <div style={{ fontFamily: 'var(--font-primary)', fontSize: '2rem', color: 'var(--accent-gold)' }}>₹{investmentData.summary.currentValue.toLocaleString()}</div>
+              <div style={{ color: 'var(--text-positive)', fontSize: '0.875rem', marginTop: '4px' }}>
+                +₹{investmentData.summary.thisMonthReturn.toLocaleString()} (+{investmentData.summary.thisMonthPercentage}% this month)
+              </div>
             </div>
           </div>
         </div>
 
-        {/* Quick Actions */}
+        {/* Quick Actions — secondary buttons */}
         <div style={{ display: 'flex', gap: '16px' }}>
-          <button className="dashboard-quick-btn" onClick={() => setActivePanel('add')}>
-            <Plus size={16} />
-            <span>ADD INVESTMENT</span>
-          </button>
           <button className="dashboard-quick-btn" onClick={() => setActivePanel('plan')}>
             <Target size={16} />
             <span>PLAN INVESTMENT</span>
