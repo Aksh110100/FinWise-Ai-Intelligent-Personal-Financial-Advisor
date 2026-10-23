@@ -3,547 +3,673 @@ import { Response } from 'express';
 import path from 'path';
 import fs from 'fs';
 
+interface ReportSnapshot {
+  generatedAt: string;
+  user: { id: string; name: string; email: string; currency?: string };
+  period: string;
+  summary: {
+    totalAllTime: number;
+    thisMonthTotal: number;
+    prevMonthTotal: number;
+    monthlyChangePct: number;
+    avgMonthly: number;
+    projectedYear: number;
+    totalCount: number;
+    savingsRate: number | null;
+  };
+  growth: Array<{ key: string; label: string; saved: number }>;
+  monthlySavings: Array<{ key: string; monthLabel: string; amount: number }>;
+  sources: Array<{ label: string; source: string; impact: number }>;
+  goals: Array<{
+    id: string; name: string; targetAmount: number;
+    savedAmount: number; remainingAmount: number;
+    progress: number; status: string;
+    targetDate?: string; category?: string;
+  }>;
+  goalLinkedSavings: Array<{ goalId: string; goalName: string; totalLinked: number }>;
+  unassignedTotal: number;
+  transactions: Array<{
+    id: string; name: string; amount: number; date: string;
+    source: string; goalId?: string; note?: string; type: string;
+  }>;
+  insights: {
+    totalSavings: number; largestSource: string;
+    activeGoals: number; completedGoals: number;
+    largestSingle: number; averageSaving: number; mostSavedMonth: string;
+  };
+  forecast?: { current: number; threeMonths: number; sixMonths: number; twelveMonths: number; } | null;
+}
+
 export class ReportService {
-  static generateSavingsReportPDF(snapshot: any, res: Response) {
-    // 4. PAGE SIZE: A4 Portrait, 595.28 × 841.89 points
+  static generateSavingsReportPDF(snapshot: ReportSnapshot, res: Response) {
     const doc = new PDFDocument({
-      size: 'A4',
-      margin: 0,
-      autoFirstPage: false,
-      bufferPages: true,
-      info: {
-        Title: 'FinWise AI Savings & Goals Report',
-        Author: 'FinWise AI',
-      }
+      size: 'A4', margin: 0, autoFirstPage: false, bufferPages: true,
+      info: { Title: 'FinWise AI Savings & Goals Report', Author: 'FinWise AI' },
+    });
+    
+    // Catch errors within pdfkit to avoid unhandled rejections/exceptions
+    doc.on('error', (err) => {
+      console.error('PDFKit error:', err);
+      if (!res.headersSent) res.status(500).send('PDF generation failed');
+      else if (!res.writableEnded) res.end();
     });
 
     doc.pipe(res);
 
-    // 5. PAGE MARGINS
-    const leftMargin = 44;
-    const rightMargin = 44;
-    const topMargin = 42;
-    const bottomMargin = 45;
-    
-    const pageHeight = 841.89;
-    const pageWidth = 595.28;
-    const contentWidth = pageWidth - leftMargin - rightMargin; // ~507pt
+    try {
+      const PW = 595.28, PH = 841.89;
+      const ML = 44, MR = 44, MT = 44, MB = 48;
+      const CW = PW - ML - MR;
 
-    // Global state
-    let currentY = topMargin;
-    let pageCount = 0;
+      const C = {
+        bg: '#0F1115', card: '#14171C', cardAlt: '#1A1D23',
+        primary: '#F5F5F5', secondary: '#8A8A8A',
+        accent: '#E3B873', divider: '#252525',
+        positive: '#2ECC71', negative: '#E74C3C', bar: '#1E2129',
+      };
+
+    let Y = MT;
+    let pageIdx = -1;
 
     const logoPath = path.resolve(process.cwd(), '../frontend/public/logo.png');
+    const hasLogo = fs.existsSync(logoPath);
 
-    // 8. REPORT DESIGN LANGUAGE
-    const colors = {
-      background: '#0F1115',
-      primary: '#F5F5F5',
-      secondary: '#969696',
-      accent: '#E3B873',
-      divider: '#2A2A2A',
+    const fmt = (val: number): string => {
+      const n = Math.round(Math.abs(val));
+      return 'Rs. ' + n.toLocaleString('en-IN');
     };
+    const fmtSigned = (val: number): string =>
+      (val >= 0 ? '+' : '-') + fmt(Math.abs(val));
 
-    // Helper: format currency
-    const formatCurrency = (val: number) => `INR ${Math.round(val).toLocaleString('en-IN')}`.replace('INR ', '₹');
+    const userName =
+      snapshot.user && snapshot.user.name && snapshot.user.name !== 'undefined' && snapshot.user.name.trim()
+        ? snapshot.user.name.trim()
+        : snapshot.user && snapshot.user.email ? snapshot.user.email.split('@')[0] : 'FinWise User';
 
-    // Layout engine: 6. GLOBAL LAYOUT SYSTEM
-    const ensureSpace = (requiredHeight: number) => {
-      if (currentY + requiredHeight > pageHeight - bottomMargin) {
-        addPage();
-        return true;
-      }
+    const genDate = new Date(snapshot.generatedAt).toLocaleDateString('en-GB', {
+      day: 'numeric', month: 'long', year: 'numeric',
+    });
+
+    const ensureSpace = (h: number): boolean => {
+      if (Y + h > PH - MB) { addPage(); return true; }
       return false;
     };
 
+    const hLine = (x1: number, x2: number, color = C.divider, w = 0.5) =>
+      doc.moveTo(x1, Y).lineTo(x2, Y).strokeColor(color).lineWidth(w).stroke();
+
+    const hLineAt = (yy: number, x1: number, x2: number, color = C.divider, w = 0.5) =>
+      doc.moveTo(x1, yy).lineTo(x2, yy).strokeColor(color).lineWidth(w).stroke();
+
     const addPage = () => {
       doc.addPage({ size: 'A4', margin: 0 });
-      pageCount++;
-      
-      // Draw background
-      doc.rect(0, 0, pageWidth, pageHeight).fill(colors.background);
-      
-      currentY = topMargin;
-      
-      if (pageCount > 1) {
-        drawHeader();
-      }
+      pageIdx++;
+      doc.rect(0, 0, PW, PH).fill(C.bg);
+      Y = MT;
+      if (pageIdx > 0) drawRunningHeader();
     };
 
-    const drawFooter = () => {
-      const generatedDate = new Date(snapshot.generatedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+    const drawRunningHeader = () => {
+      if (hasLogo) { doc.image(logoPath, ML, Y - 4, { height: 18 }); }
+      else { doc.fontSize(9).fillColor(C.accent).font('Helvetica-Bold').text('FINWISE AI', ML, Y); }
+      doc.fontSize(8).fillColor(C.secondary).font('Helvetica')
+        .text('SAVINGS & GOALS REPORT', ML, Y + 20, { width: CW });
+      Y += 36; hLine(ML, ML + CW, C.divider, 0.5); Y += 12;
+    };
+
+    const drawAllFooters = () => {
+      let range;
+      try {
+        range = doc.bufferedPageRange();
+      } catch(e) {
+        range = { start: 0, count: pageIdx + 1 };
+      }
       
-      for (let i = 0; i < pageCount; i++) {
+      const count = range.count;
+      for (let i = range.start; i < range.start + count; i++) {
         doc.switchToPage(i);
-        doc.fontSize(7).fillColor(colors.secondary);
-        
-        const footerY = pageHeight - bottomMargin + 15;
-        
-        doc.text('FINWISE AI | Savings & Goals Report', leftMargin, footerY, { align: 'left' });
-        doc.text(`Generated: ${generatedDate}`, leftMargin, footerY, { align: 'center', width: contentWidth });
-        doc.text(`Page ${i + 1}`, leftMargin, footerY, { align: 'right', width: contentWidth });
+        const fy = PH - MB + 18;
+        doc.fontSize(7).fillColor(C.secondary).font('Helvetica');
+        doc.text('FINWISE AI  |  Savings & Goals Report', ML, fy, { align: 'left' });
+        doc.text(genDate, ML, fy, { width: CW, align: 'center' });
+        doc.text('Page ' + (i + 1), ML, fy, { width: CW, align: 'right' });
+        hLineAt(fy - 6, ML, ML + CW, C.divider, 0.5);
       }
     };
 
-    const drawHeader = () => {
-      if (fs.existsSync(logoPath)) {
-        doc.image(logoPath, leftMargin, currentY - 5, { height: 20 });
-      } else {
-        doc.fontSize(10).fillColor(colors.accent).text('FINWISE AI', leftMargin, currentY);
-      }
-      doc.fontSize(12).fillColor(colors.primary).text('SAVINGS & GOALS REPORT', leftMargin, currentY + 18);
-      
-      currentY += 40;
-      doc.moveTo(leftMargin, currentY).lineTo(pageWidth - rightMargin, currentY).strokeColor(colors.divider).lineWidth(1).stroke();
-      currentY += 20;
+    const sectionTitle = (title: string, gap = 14) => {
+      ensureSpace(38);
+      doc.fontSize(13).fillColor(C.primary).font('Helvetica-Bold').text(title, ML, Y);
+      Y += 18; hLine(ML, ML + CW, C.accent, 1); Y += gap;
     };
 
-    // 9. PAGE 1 — EXECUTIVE REPORT
-    const drawCoverTitle = () => {
-      if (fs.existsSync(logoPath)) {
-        doc.image(logoPath, leftMargin, currentY, { height: 28 });
-        currentY += 40;
-      } else {
-        doc.fontSize(14).fillColor(colors.accent).text('FINWISE AI', leftMargin, currentY);
-        currentY += 24;
-      }
-      
-      doc.fontSize(28).fillColor(colors.primary).text('SAVINGS & GOALS REPORT', leftMargin, currentY);
-      currentY += 34;
-      
-      doc.fontSize(12).fillColor(colors.secondary).text('Financial overview and progress analysis', leftMargin, currentY);
-      currentY += 30;
-
-      const generatedDate = new Date(snapshot.generatedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
-      
-      doc.fontSize(9).fillColor(colors.secondary);
-      doc.text(`Report Period: All-Time`, leftMargin, currentY);
-      doc.text(`Generated: ${generatedDate}`, leftMargin + 150, currentY);
-      if (snapshot.user) {
-        doc.text(`User: ${snapshot.user.name || snapshot.user.email}`, leftMargin + 300, currentY);
-      }
-      
-      currentY += 40;
+    const subTitle = (title: string, gap = 10) => {
+      ensureSpace(28);
+      doc.fontSize(10).fillColor(C.accent).font('Helvetica-Bold').text(title, ML, Y);
+      Y += 14; hLine(ML, ML + CW, C.divider, 0.5); Y += gap;
     };
 
-    const drawSectionTitle = (title: string, spacing = 20) => {
-      ensureSpace(40);
-      doc.fontSize(14).fillColor(colors.primary).text(title, leftMargin, currentY);
-      currentY += spacing;
-    };
-
-    const drawMetricGrid = () => {
-      ensureSpace(120);
-      drawSectionTitle('EXECUTIVE SUMMARY');
-      
-      const cardWidth = (contentWidth - 20) / 2;
-      const cardHeight = 65;
-      
-      const metrics = [
-        { label: 'TOTAL SAVED', value: formatCurrency(snapshot.summary.totalAllTime || 0) },
-        { label: 'THIS MONTH', value: formatCurrency(snapshot.summary.thisMonthTotal || 0) },
-        { label: 'ACTIVE GOALS', value: snapshot.goals.filter((g: any) => g.status === 'ACTIVE').length.toString() },
-        { label: 'COMPLETED', value: snapshot.goals.filter((g: any) => g.status === 'COMPLETED').length.toString() }
-      ];
-
-      metrics.forEach((m, i) => {
-        const row = Math.floor(i / 2);
-        const col = i % 2;
-        const x = leftMargin + (col * (cardWidth + 20));
-        const y = currentY + (row * (cardHeight + 15));
-
-        doc.roundedRect(x, y, cardWidth, cardHeight, 4).fillAndStroke('#15181C', colors.divider);
-        
-        doc.fontSize(9).fillColor(colors.secondary).text(m.label, x + 15, y + 15);
-        doc.fontSize(16).fillColor(colors.primary).text(m.value, x + 15, y + 32);
-      });
-      
-      currentY += (2 * cardHeight) + 15 + 40;
-    };
-
-    const drawSummaryTable = () => {
-      ensureSpace(120);
-      drawSectionTitle('SAVINGS SUMMARY');
-      
-      const data = [
-        ['Total Saved', formatCurrency(snapshot.summary.totalAllTime || 0)],
-        ['This Month', formatCurrency(snapshot.summary.thisMonthTotal || 0)],
-        ['Monthly Change', `${snapshot.summary.monthlyChangePct > 0 ? '+' : ''}${snapshot.summary.monthlyChangePct || 0}%`],
-        ['Projected Year', formatCurrency(snapshot.summary.projectedYear || 0)]
-      ];
-
-      // Add Health if active goal exists
-      const firstGoal = snapshot.goals.find((g: any) => g.status === 'ACTIVE');
-      if (firstGoal) {
-        const healthScore = Math.floor(firstGoal.progress || 0);
-        data.push(['Savings Health', `${healthScore}%`]);
-      } else {
-        data.push(['Savings Health', '—']);
-      }
-
-      const rowHeight = 22;
-      data.forEach((row, i) => {
-        const y = currentY + (i * rowHeight);
-        doc.fontSize(10).fillColor(colors.secondary).text(row[0], leftMargin, y);
-        doc.fillColor(colors.primary).text(row[1], leftMargin, y, { align: 'right', width: contentWidth });
-        
-        doc.moveTo(leftMargin, y + 18).lineTo(leftMargin + contentWidth, y + 18).strokeColor(colors.divider).lineWidth(0.5).stroke();
-      });
-
-      currentY += (data.length * rowHeight) + 40;
-    };
-
-    const drawSourceBreakdown = () => {
-      ensureSpace(100);
-      drawSectionTitle('SAVINGS SOURCES');
-      
-      // Header
-      doc.fontSize(9).fillColor(colors.accent);
-      doc.text('SOURCE', leftMargin, currentY);
-      doc.text('AMOUNT', leftMargin + 200, currentY, { width: 150, align: 'right' });
-      doc.text('SHARE', leftMargin + 350, currentY, { width: contentWidth - 350, align: 'right' });
-      
-      currentY += 15;
-      doc.moveTo(leftMargin, currentY).lineTo(leftMargin + contentWidth, currentY).strokeColor(colors.accent).lineWidth(1).stroke();
-      currentY += 10;
-
-      let total = 0;
-      const rowHeight = 20;
-
-      if (!snapshot.sources || snapshot.sources.length === 0) {
-        doc.fontSize(10).fillColor(colors.secondary).text('No source data available.', leftMargin, currentY);
-        currentY += 30;
-      } else {
-        snapshot.sources.forEach((s: any) => {
-          ensureSpace(rowHeight);
-          doc.fontSize(10).fillColor(colors.primary);
-          doc.text(s.label || s.type, leftMargin, currentY);
-          doc.text(formatCurrency(s.impact), leftMargin + 200, currentY, { width: 150, align: 'right' });
-          
-          const share = snapshot.summary.totalAllTime > 0 ? ((s.impact / snapshot.summary.totalAllTime) * 100).toFixed(1) : '0';
-          doc.text(`${share}%`, leftMargin + 350, currentY, { width: contentWidth - 350, align: 'right' });
-          
-          total += s.impact;
-          currentY += rowHeight;
-          
-          doc.moveTo(leftMargin, currentY - 5).lineTo(leftMargin + contentWidth, currentY - 5).strokeColor(colors.divider).lineWidth(0.5).stroke();
-        });
-
-        ensureSpace(rowHeight);
-        currentY += 5;
-        doc.fontSize(10).fillColor(colors.primary).text('TOTAL', leftMargin, currentY);
-        doc.text(formatCurrency(total), leftMargin + 200, currentY, { width: 150, align: 'right' });
-        doc.text('100%', leftMargin + 350, currentY, { width: contentWidth - 350, align: 'right' });
-        currentY += 40;
-      }
-    };
-
-    const drawSavingsGrowthChart = () => {
-      ensureSpace(280);
-      drawSectionTitle('SAVINGS GROWTH & TRENDS');
-      
-      const chartHeight = 220;
-      const chartY = currentY;
-      
-      doc.rect(leftMargin, chartY, contentWidth, chartHeight).fill('#15181C');
-      
-      if (!snapshot.growth || snapshot.growth.length === 0) {
-         doc.fontSize(10).fillColor(colors.secondary).text('Insufficient data to display trends.', leftMargin, chartY + 100, { align: 'center', width: contentWidth });
-      } else {
-         // Draw a simple line chart approximation for professional look
-         const data = snapshot.growth;
-         const maxVal = Math.max(...data.map((d: any) => d.saved || 0), 1);
-         const minVal = 0;
-         
-         const chartInnerX = leftMargin + 40;
-         const chartInnerWidth = contentWidth - 60;
-         const chartInnerY = chartY + 20;
-         const chartInnerHeight = chartHeight - 50;
-
-         // Y-axis ticks
-         doc.fontSize(8).fillColor(colors.secondary);
-         for(let i=0; i<=4; i++) {
-            const val = minVal + (maxVal - minVal) * (i/4);
-            const y = chartInnerY + chartInnerHeight - (chartInnerHeight * (i/4));
-            
-            // Format tick like 50K
-            let tickLabel = `₹${(val/1000).toFixed(0)}K`;
-            if (val === 0) tickLabel = '0';
-            
-            doc.text(tickLabel, leftMargin + 5, y - 4, { width: 30, align: 'right' });
-            doc.moveTo(chartInnerX, y).lineTo(chartInnerX + chartInnerWidth, y).strokeColor(colors.divider).lineWidth(0.5).stroke();
-         }
-
-         // Line
-         const stepX = chartInnerWidth / Math.max((data.length - 1), 1);
-         
-         doc.strokeColor(colors.accent).lineWidth(2);
-         let started = false;
-
-         data.forEach((d: any, i: number) => {
-            const x = chartInnerX + (i * stepX);
-            const y = chartInnerY + chartInnerHeight - (((d.saved || 0) - minVal) / (maxVal - minVal) * chartInnerHeight);
-            
-            if (!started) {
-              doc.moveTo(x, y);
-              started = true;
-            } else {
-              doc.lineTo(x, y);
-            }
-            
-            // X-axis label (only show a few to avoid crowding)
-            if (data.length <= 6 || i % Math.ceil(data.length / 6) === 0 || i === data.length - 1) {
-              doc.text(d.name || '', x - 20, chartInnerY + chartInnerHeight + 10, { width: 40, align: 'center' });
-            }
-         });
-         
-         if (started) {
-           doc.stroke();
-         }
-      }
-      
-      currentY += chartHeight + 40;
-    };
-
-    const drawMonthlySavingsTable = () => {
-      ensureSpace(120);
-      drawSectionTitle('MONTHLY SAVINGS');
-
-      doc.fontSize(9).fillColor(colors.accent);
-      doc.text('MONTH', leftMargin, currentY);
-      doc.text('SAVINGS', leftMargin + 200, currentY, { width: contentWidth - 200, align: 'right' });
-      
-      currentY += 15;
-      doc.moveTo(leftMargin, currentY).lineTo(leftMargin + contentWidth, currentY).strokeColor(colors.accent).lineWidth(1).stroke();
-      currentY += 10;
-
-      if (!snapshot.monthlySavings || snapshot.monthlySavings.length === 0) {
-        doc.fontSize(10).fillColor(colors.secondary).text('No monthly savings recorded.', leftMargin, currentY);
-        currentY += 30;
-      } else {
-        snapshot.monthlySavings.forEach((m: any) => {
-          ensureSpace(20);
-          doc.fontSize(10).fillColor(colors.primary);
-          doc.text(m.monthLabel, leftMargin, currentY);
-          doc.text(formatCurrency(m.amount), leftMargin + 200, currentY, { width: contentWidth - 200, align: 'right' });
-          currentY += 20;
-          doc.moveTo(leftMargin, currentY - 5).lineTo(leftMargin + contentWidth, currentY - 5).strokeColor(colors.divider).lineWidth(0.5).stroke();
-        });
-        currentY += 30;
-      }
-    };
-
-    const drawGoalsTable = () => {
-      ensureSpace(150);
-      drawSectionTitle('SAVINGS GOALS');
-
-      doc.fontSize(8).fillColor(colors.accent);
-      
-      const colX = [leftMargin, leftMargin + 90, leftMargin + 160, leftMargin + 230, leftMargin + 300, leftMargin + 400];
-      
-      doc.text('GOAL', colX[0], currentY);
-      doc.text('SAVED', colX[1], currentY);
-      doc.text('TARGET', colX[2], currentY);
-      doc.text('REMAINING', colX[3], currentY);
-      doc.text('PROGRESS', colX[4], currentY);
-      doc.text('STATUS', colX[5], currentY);
-      
-      currentY += 15;
-      doc.moveTo(leftMargin, currentY).lineTo(leftMargin + contentWidth, currentY).strokeColor(colors.accent).lineWidth(1).stroke();
-      currentY += 10;
-
-      const activeGoals = snapshot.goals.filter((g: any) => g.status === 'ACTIVE');
-      const rowHeight = 25;
-
-      if (activeGoals.length === 0) {
-        doc.fontSize(10).fillColor(colors.secondary).text('No active goals.', leftMargin, currentY);
-        currentY += 30;
-      } else {
-        activeGoals.forEach((g: any) => {
-          ensureSpace(35);
-          
-          doc.fontSize(9).fillColor(colors.primary);
-          
-          let goalName = g.name || 'Unnamed';
-          if (goalName.length > 15) goalName = goalName.substring(0, 12) + '...';
-
-          doc.text(goalName, colX[0], currentY, { width: 80 });
-          doc.text(formatCurrency(g.savedAmount || 0), colX[1], currentY, { width: 65 });
-          doc.text(formatCurrency(g.targetAmount || 0), colX[2], currentY, { width: 65 });
-          doc.text(formatCurrency(Math.max((g.targetAmount || 0) - (g.savedAmount || 0), 0)), colX[3], currentY, { width: 65 });
-          
-          const progressPct = Math.min(Math.floor(g.progress || 0), 100);
-          
-          // Draw small progress bar
-          const barWidth = 60;
-          doc.rect(colX[4], currentY + 2, barWidth, 6).fill('#15181C');
-          if (progressPct > 0) {
-            doc.rect(colX[4], currentY + 2, barWidth * (progressPct / 100), 6).fill(colors.primary);
-          }
-          doc.fontSize(8).fillColor(colors.secondary).text(`${progressPct}%`, colX[4] + barWidth + 5, currentY);
-          
-          doc.fontSize(9).fillColor(colors.accent).text(g.status || 'ACTIVE', colX[5], currentY);
-          
-          currentY += rowHeight;
-          doc.moveTo(leftMargin, currentY - 5).lineTo(leftMargin + contentWidth, currentY - 5).strokeColor(colors.divider).lineWidth(0.5).stroke();
-        });
-        currentY += 20;
-      }
-      
-      // Completed goals
-      const completedGoals = snapshot.goals.filter((g: any) => g.status === 'COMPLETED');
-      if (completedGoals.length > 0) {
-        ensureSpace(80);
-        doc.fontSize(12).fillColor(colors.primary).text('COMPLETED GOALS', leftMargin, currentY);
-        currentY += 15;
-        
-        doc.fontSize(8).fillColor(colors.accent);
-        doc.text('GOAL', leftMargin, currentY);
-        doc.text('TARGET', leftMargin + 200, currentY);
-        doc.text('COMPLETED DATE', leftMargin + 350, currentY);
-        currentY += 12;
-        doc.moveTo(leftMargin, currentY).lineTo(leftMargin + contentWidth, currentY).strokeColor(colors.divider).lineWidth(1).stroke();
-        currentY += 8;
-        
-        completedGoals.forEach((g: any) => {
-          ensureSpace(20);
-          doc.fontSize(9).fillColor(colors.secondary);
-          doc.text(g.name || 'Unnamed', leftMargin, currentY);
-          doc.text(formatCurrency(g.targetAmount || 0), leftMargin + 200, currentY);
-          doc.text(new Date(g.updatedAt || g.createdAt).toLocaleDateString('en-GB'), leftMargin + 350, currentY);
-          currentY += 15;
-        });
-        currentY += 30;
-      }
-    };
-
-    const drawTransactionsTable = () => {
-      addPage(); // Transactions usually start on a fresh page
-      drawSectionTitle('SAVINGS TRANSACTIONS');
-
-      // Unassigned
-      const unassignedTotal = snapshot.transactions.filter((t: any) => !t.goalId).reduce((sum: number, t: any) => sum + Number(t.amount || 0), 0);
-      doc.fontSize(10).fillColor(colors.primary).text('UNASSIGNED SAVINGS');
-      doc.text(formatCurrency(unassignedTotal), leftMargin + 200, currentY - 12);
-      currentY += 10;
-
-      const drawTxHeader = () => {
-        ensureSpace(30);
-        doc.fontSize(8).fillColor(colors.accent);
-        doc.text('DATE', leftMargin, currentY, { width: 70 });
-        doc.text('NAME / NOTE', leftMargin + 70, currentY, { width: 140 });
-        doc.text('SOURCE', leftMargin + 210, currentY, { width: 70 });
-        doc.text('GOAL', leftMargin + 280, currentY, { width: 100 });
-        doc.text('AMOUNT', leftMargin + 380, currentY, { width: contentWidth - 380, align: 'right' });
-        
-        currentY += 15;
-        doc.moveTo(leftMargin, currentY).lineTo(leftMargin + contentWidth, currentY).strokeColor(colors.accent).lineWidth(1).stroke();
-        currentY += 10;
-      };
-
-      drawTxHeader();
-
-      if (!snapshot.transactions || snapshot.transactions.length === 0) {
-        doc.fontSize(10).fillColor(colors.secondary).text('No transactions found.', leftMargin, currentY);
-        currentY += 30;
-      } else {
-        snapshot.transactions.forEach((tx: any) => {
-          // Check if we need a new page and redraw header
-          if (ensureSpace(25)) {
-            drawTxHeader();
-          }
-
-          const txDate = new Date(tx.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-          let nameNote = tx.name || '';
-          if (tx.note) nameNote += ` - ${tx.note}`;
-          if (nameNote.length > 30) nameNote = nameNote.substring(0, 27) + '...';
-          
-          let goalName = '—';
-          if (tx.goalId && snapshot.goals) {
-            const found = snapshot.goals.find((g: any) => g.id === tx.goalId);
-            if (found) {
-               goalName = found.name;
-               if (goalName.length > 18) goalName = goalName.substring(0, 15) + '...';
-            }
-          }
-
-          doc.fontSize(9).fillColor(colors.primary);
-          doc.text(txDate, leftMargin, currentY, { width: 70 });
-          doc.text(nameNote, leftMargin + 70, currentY, { width: 140 });
-          doc.text(tx.source || 'OTHER', leftMargin + 210, currentY, { width: 70 });
-          doc.text(goalName, leftMargin + 280, currentY, { width: 100 });
-          doc.text(formatCurrency(tx.amount || 0), leftMargin + 380, currentY, { width: contentWidth - 380, align: 'right' });
-          
-          currentY += 20;
-          doc.moveTo(leftMargin, currentY - 5).lineTo(leftMargin + contentWidth, currentY - 5).strokeColor(colors.divider).lineWidth(0.5).stroke();
-        });
-        currentY += 30;
-      }
-    };
-
-    const drawFinalInsights = () => {
-      ensureSpace(120);
-      drawSectionTitle('SAVINGS INSIGHTS');
-
-      doc.fontSize(10).fillColor(colors.secondary);
-      doc.text('Total savings:', leftMargin, currentY);
-      doc.fillColor(colors.primary).text(formatCurrency(snapshot.summary.totalAllTime || 0), leftMargin + 150, currentY);
-      currentY += 20;
-
-      let largestSource = 'None';
-      if (snapshot.sources && snapshot.sources.length > 0) {
-        const sorted = [...snapshot.sources].sort((a: any, b: any) => b.impact - a.impact);
-        largestSource = sorted[0].label || sorted[0].type;
-      }
-      doc.fillColor(colors.secondary).text('Largest source:', leftMargin, currentY);
-      doc.fillColor(colors.primary).text(largestSource, leftMargin + 150, currentY);
-      currentY += 20;
-
-      const activeGoals = snapshot.goals.filter((g: any) => g.status === 'ACTIVE').length;
-      doc.fillColor(colors.secondary).text('Active goals:', leftMargin, currentY);
-      doc.fillColor(colors.primary).text(activeGoals.toString(), leftMargin + 150, currentY);
-      currentY += 20;
-      
-      const completedGoals = snapshot.goals.filter((g: any) => g.status === 'COMPLETED').length;
-      doc.fillColor(colors.secondary).text('Completed goals:', leftMargin, currentY);
-      doc.fillColor(colors.primary).text(completedGoals.toString(), leftMargin + 150, currentY);
-      currentY += 40;
-    };
-
-    const drawReportNote = () => {
-      ensureSpace(40);
-      doc.fontSize(9).fillColor(colors.accent).text('REPORT NOTE', leftMargin, currentY);
-      currentY += 15;
-      doc.fontSize(8).fillColor(colors.secondary).text('This report is generated from the financial records available in FinWise AI at the time of generation.', leftMargin, currentY);
-    };
-
-    // Build Document
+    // PAGE 1 - Cover + Executive Summary + Savings Summary + Sources
     addPage();
-    drawCoverTitle();
-    
-    // Page 1 blocks
-    drawMetricGrid();
-    
-    // Test if we can fit both summary and sources on page 1
-    // A standard page is ~841. We start ~160. Metric grid takes ~200.
-    // If not, ensureSpace will automatically page break them appropriately.
-    drawSummaryTable();
-    drawSourceBreakdown();
-    
-    // Page 2 typically
-    if (currentY > topMargin + 100) addPage(); // Force page 2 for chart if page 1 has stuff
-    drawSavingsGrowthChart();
-    drawMonthlySavingsTable();
-    drawGoalsTable();
 
-    // Page 3 typically
-    drawTransactionsTable();
+    if (hasLogo) { doc.image(logoPath, ML, Y, { height: 32 }); Y += 44; }
+    else { doc.fontSize(13).fillColor(C.accent).font('Helvetica-Bold').text('FINWISE AI', ML, Y); Y += 24; }
+
+    doc.fontSize(26).fillColor(C.primary).font('Helvetica-Bold').text('SAVINGS & GOALS REPORT', ML, Y);
+    Y += 34;
+    doc.fontSize(11).fillColor(C.secondary).font('Helvetica')
+      .text('Financial overview, goal progress, and savings analysis', ML, Y);
+    Y += 22;
+    doc.fontSize(8.5).fillColor(C.secondary).font('Helvetica');
+    doc.text('Report Period:  ' + snapshot.period, ML, Y);
+    doc.text('Generated:  ' + genDate, ML + 200, Y);
+    doc.text('Prepared for:  ' + userName, ML + 380, Y);
+    Y += 18; hLine(ML, ML + CW, C.accent, 1); Y += 24;
+
+    sectionTitle('EXECUTIVE SUMMARY', 16);
+    const isGoalCompleted = (g: any) => g.status === 'COMPLETED' || (g.progress >= 100) || (g.targetAmount > 0 && g.savedAmount >= g.targetAmount);
     
-    drawFinalInsights();
-    drawReportNote();
+    const activeGoals   = snapshot.goals.filter((g: any) => !isGoalCompleted(g)).length;
+    const completedGoals = snapshot.goals.filter((g: any) => isGoalCompleted(g)).length;
+    const overdueGoals  = snapshot.goals.filter((g: any) =>
+      !isGoalCompleted(g) && g.targetDate && new Date(g.targetDate) < new Date()
+    ).length;
 
-    drawFooter();
+    const metricCards = [
+      { label: 'TOTAL SAVED',     value: fmt(snapshot.summary.totalAllTime),   sub: snapshot.summary.totalCount + ' transactions' },
+      { label: 'THIS MONTH',      value: fmt(snapshot.summary.thisMonthTotal),  sub: (snapshot.summary.monthlyChangePct >= 0 ? '+' : '') + snapshot.summary.monthlyChangePct + '% vs last month' },
+      { label: 'ACTIVE GOALS',    value: activeGoals.toString(),               sub: overdueGoals > 0 ? overdueGoals + ' overdue' : 'all on track' },
+      { label: 'COMPLETED GOALS', value: completedGoals.toString(),             sub: 'successfully achieved' },
+    ];
 
+    const cW2 = (CW - 16) / 2, cH = 72;
+    metricCards.forEach((m, i) => {
+      const col = i % 2, row = Math.floor(i / 2);
+      const cx = ML + col * (cW2 + 16), cy = Y + row * (cH + 12);
+      doc.roundedRect(cx, cy, cW2, cH, 5).fill(C.card);
+      doc.rect(cx, cy, 3, cH).fill(C.accent);
+      doc.fontSize(7.5).fillColor(C.secondary).font('Helvetica-Bold').text(m.label, cx + 14, cy + 12, { width: cW2 - 20 });
+      doc.fontSize(19).fillColor(C.primary).font('Helvetica-Bold').text(m.value, cx + 14, cy + 25, { width: cW2 - 20 });
+      doc.fontSize(7.5).fillColor(C.secondary).font('Helvetica').text(m.sub, cx + 14, cy + 54, { width: cW2 - 20 });
+    });
+    Y += 2 * (cH + 12) + 18;
+
+    sectionTitle('SAVINGS SUMMARY', 12);
+    const summaryRows = [
+      ['Total Saved (All Time)',   fmt(snapshot.summary.totalAllTime)],
+      ['This Month',               fmt(snapshot.summary.thisMonthTotal)],
+      ['Previous Month',           fmt(snapshot.summary.prevMonthTotal)],
+      ['Monthly Change',           (snapshot.summary.monthlyChangePct >= 0 ? '+' : '') + snapshot.summary.monthlyChangePct + '%'],
+      ['Average Monthly (6 mo)',   fmt(snapshot.summary.avgMonthly)],
+      ['Projected Annual',         fmt(snapshot.summary.projectedYear)],
+      ['Savings Rate',             snapshot.summary.savingsRate != null ? snapshot.summary.savingsRate + '%' : 'Not available'],
+      ['Total Transactions',       snapshot.summary.totalCount.toString()],
+    ];
+    summaryRows.forEach((row, i) => {
+      ensureSpace(22);
+      if (i % 2 === 0) doc.rect(ML, Y - 3, CW, 22).fill(C.card);
+      const vc = (row[0] === 'Monthly Change' && snapshot.summary.monthlyChangePct < 0) ? C.negative : C.primary;
+      doc.fontSize(9.5).fillColor(C.secondary).font('Helvetica').text(row[0], ML + 10, Y, { width: CW * 0.55 });
+      doc.fontSize(9.5).fillColor(vc).font('Helvetica-Bold').text(row[1], ML + 10, Y, { width: CW - 10, align: 'right' });
+      Y += 22;
+    });
+    Y += 18;
+
+    sectionTitle('SAVINGS SOURCES', 10);
+    doc.fontSize(8).fillColor(C.accent).font('Helvetica-Bold');
+    doc.text('SOURCE', ML + 10, Y, { width: 175 });
+    doc.text('AMOUNT', ML + 195, Y, { width: 120, align: 'right' });
+    doc.text('SHARE',  ML + 325, Y, { width: 80, align: 'right' });
+    doc.text('VISUAL', ML + 415, Y, { width: CW - 415 });
+    Y += 14; hLine(ML, ML + CW, C.accent, 1); Y += 8;
+
+    const totalSrcAmt = snapshot.sources.reduce((s: number, x: any) => s + x.impact, 0);
+    if (!snapshot.sources.length) {
+      doc.fontSize(9).fillColor(C.secondary).font('Helvetica').text('No source data available.', ML + 10, Y); Y += 24;
+    } else {
+      snapshot.sources.forEach((s: any, i: number) => {
+        ensureSpace(22);
+        if (i % 2 === 0) doc.rect(ML, Y - 2, CW, 22).fill(C.card);
+        const shr = totalSrcAmt > 0 ? (s.impact / totalSrcAmt) * 100 : 0;
+        const bMW = CW - 425, bFW = bMW * (shr / 100);
+        doc.fontSize(9.5).fillColor(C.primary).font('Helvetica').text(s.label, ML + 10, Y, { width: 180 });
+        doc.fontSize(9.5).fillColor(C.primary).font('Helvetica-Bold').text(fmt(s.impact), ML + 195, Y, { width: 120, align: 'right' });
+        doc.fontSize(9.5).fillColor(C.secondary).font('Helvetica').text(shr.toFixed(1) + '%', ML + 325, Y, { width: 80, align: 'right' });
+        doc.rect(ML + 415, Y + 3, bMW, 8).fill(C.bar);
+        if (bFW > 0) doc.rect(ML + 415, Y + 3, bFW, 8).fill(C.accent);
+        Y += 22; hLineAt(Y - 4, ML, ML + CW, C.divider, 0.3);
+      });
+      ensureSpace(26);
+      doc.rect(ML, Y - 2, CW, 26).fill(C.cardAlt);
+      doc.fontSize(9.5).fillColor(C.accent).font('Helvetica-Bold').text('TOTAL', ML + 10, Y + 3, { width: 180 });
+      doc.fontSize(9.5).fillColor(C.primary).font('Helvetica-Bold').text(fmt(totalSrcAmt), ML + 195, Y + 3, { width: 120, align: 'right' });
+      doc.fontSize(9.5).fillColor(C.secondary).font('Helvetica').text('100%', ML + 325, Y + 3, { width: 80, align: 'right' });
+      Y += 30;
+    }
+    Y += 8;
+
+    // PAGE 2 - Savings Growth + Monthly Analysis
+    if (Y > MT + 80) addPage();
+
+    sectionTitle('SAVINGS GROWTH & TRENDS', 12);
+    const CHART_H = 200;
+    ensureSpace(CHART_H + 50);
+    doc.roundedRect(ML, Y, CW, CHART_H, 4).fill(C.card);
+
+    if (!snapshot.growth || snapshot.growth.length === 0) {
+      doc.fontSize(9).fillColor(C.secondary).font('Helvetica')
+        .text('No savings history available for growth chart.', ML, Y + CHART_H / 2 - 5, { align: 'center', width: CW });
+    } else {
+      const data = snapshot.growth;
+      const maxV = Math.max(...data.map((d: any) => d.saved), 1);
+      const iX = ML + 50, iW = CW - 58, iY = Y + 16, iH = CHART_H - 46;
+
+      for (let g = 0; g <= 4; g++) {
+        const val = maxV * (g / 4);
+        const gy  = iY + iH - iH * (g / 4);
+        const lbl = val === 0 ? '0' : val >= 100000 ? (val / 100000).toFixed(1) + 'L' : (val / 1000).toFixed(0) + 'K';
+        doc.fontSize(7).fillColor(C.secondary).font('Helvetica').text(lbl, ML + 2, gy - 4, { width: 44, align: 'right' });
+        doc.moveTo(iX, gy).lineTo(iX + iW, gy).strokeColor(g === 0 ? C.divider : '#1C1C22').lineWidth(0.4).stroke();
+      }
+
+      const sX = iW / Math.max(data.length - 1, 1);
+      const pX = (i: number) => iX + i * sX;
+      const pY = (v: number) => iY + iH - (v / maxV) * iH;
+
+      if (data.length > 1) {
+        doc.save();
+        doc.moveTo(pX(0), pY(data[0].saved));
+        data.forEach((d: any, i: number) => { if (i > 0) doc.lineTo(pX(i), pY(d.saved)); });
+        doc.lineTo(pX(data.length - 1), iY + iH);
+        doc.lineTo(pX(0), iY + iH);
+        doc.closePath().fillColor('#E3B87320').fill();
+        doc.restore();
+      }
+
+      doc.strokeColor(C.accent).lineWidth(2);
+      doc.moveTo(pX(0), pY(data[0].saved));
+      data.forEach((d: any, i: number) => { if (i > 0) doc.lineTo(pX(i), pY(d.saved)); });
+      doc.stroke();
+
+      data.forEach((d: any, i: number) => {
+        const px = pX(i), py = pY(d.saved);
+        doc.circle(px, py, 3.5).fill(C.accent);
+        const show = data.length <= 8 || i === 0 || i === data.length - 1 || i % Math.ceil(data.length / 7) === 0;
+        if (show) {
+          doc.fontSize(7).fillColor(C.secondary).font('Helvetica')
+            .text(d.label, px - 20, iY + iH + 8, { width: 40, align: 'center' });
+        }
+        if (i === data.length - 1) {
+          doc.fontSize(7.5).fillColor(C.accent).font('Helvetica-Bold')
+            .text(fmt(d.saved), px - 72, py - 14, { width: 68, align: 'right' });
+        }
+      });
+    }
+    Y += CHART_H + 20;
+
+    const ms = snapshot.monthlySavings;
+    if (ms && ms.length > 1) {
+      ensureSpace(170);
+      subTitle('MONTHLY SAVINGS TREND', 10);
+      const BCH = 140, bData = ms.slice(0, 12).reverse();
+      const bMax = Math.max(...bData.map((m: any) => m.amount), 1);
+      const bIH = BCH - 32, bIY = Y + 8;
+      const bSW = CW / bData.length, bBW = Math.min(bSW - 6, 38);
+      doc.roundedRect(ML, Y, CW, BCH, 4).fill(C.card);
+      bData.forEach((m: any, i: number) => {
+        const bH = bMax > 0 ? (m.amount / bMax) * bIH : 0;
+        const bX = ML + i * bSW + (bSW - bBW) / 2, bY = bIY + bIH - bH;
+        doc.rect(bX, bIY, bBW, bIH).fill(C.bar);
+        if (bH > 0) doc.rect(bX, bY, bBW, bH).fill(C.accent);
+        doc.fontSize(6.5).fillColor(C.secondary).font('Helvetica')
+          .text(m.monthLabel.slice(0, 3), bX - 2, bIY + bIH + 5, { width: bBW + 4, align: 'center' });
+        if (m.amount > 0 && bBW >= 20) {
+          const as = m.amount >= 100000 ? (m.amount/100000).toFixed(1)+'L' : m.amount>=1000 ? (m.amount/1000).toFixed(0)+'K' : m.amount.toString();
+          doc.fontSize(6).fillColor(C.secondary).font('Helvetica').text(as, bX-2, bY-11, { width: bBW+4, align: 'center' });
+        }
+      });
+      Y += BCH + 16;
+    } else {
+      ensureSpace(36);
+      doc.fontSize(9).fillColor(C.secondary).font('Helvetica')
+        .text('Insufficient savings history for trend chart. Add savings across multiple months.', ML + 10, Y, { width: CW - 20 });
+      Y += 36;
+    }
+
+    ensureSpace(80);
+    sectionTitle('MONTHLY SAVINGS BREAKDOWN', 10);
+    doc.fontSize(8).fillColor(C.accent).font('Helvetica-Bold');
+    doc.text('MONTH', ML + 10, Y, { width: 260 });
+    doc.text('AMOUNT SAVED', ML + 270, Y, { width: 110, align: 'right' });
+    doc.text('% OF TOTAL', ML + 390, Y, { width: CW - 390, align: 'right' });
+    Y += 14; hLine(ML, ML + CW, C.accent, 1); Y += 8;
+
+    if (!ms || !ms.length) {
+      doc.fontSize(9).fillColor(C.secondary).font('Helvetica').text('No monthly data.', ML + 10, Y); Y += 24;
+    } else {
+      ms.forEach((m: any, i: number) => {
+        ensureSpace(22);
+        if (i % 2 === 0) doc.rect(ML, Y - 2, CW, 22).fill(C.card);
+        const pct = snapshot.summary.totalAllTime > 0
+          ? ((m.amount / snapshot.summary.totalAllTime) * 100).toFixed(1) : '0.0';
+        doc.fontSize(9.5).fillColor(C.primary).font('Helvetica').text(m.monthLabel, ML + 10, Y, { width: 260 });
+        doc.fontSize(9.5).fillColor(C.primary).font('Helvetica-Bold').text(fmt(m.amount), ML + 270, Y, { width: 110, align: 'right' });
+        doc.fontSize(9.5).fillColor(C.secondary).font('Helvetica').text(pct + '%', ML + 390, Y, { width: CW - 390, align: 'right' });
+        Y += 22; hLineAt(Y - 4, ML, ML + CW, C.divider, 0.3);
+      });
+    }
+    Y += 16;
+
+    // PAGE 3 - Goals Analysis
+    if (Y > MT + 80) addPage();
+    sectionTitle('SAVINGS GOALS ANALYSIS', 14);
+
+    const gMCards = [
+      { label: 'TOTAL GOALS', value: snapshot.goals.length.toString(), clr: C.accent },
+      { label: 'ACTIVE',      value: activeGoals.toString(),           clr: C.accent },
+      { label: 'COMPLETED',   value: completedGoals.toString(),        clr: C.positive },
+      { label: 'OVERDUE',     value: overdueGoals.toString(),          clr: C.negative },
+    ];
+    const gCW = (CW - 24) / 4, gCH = 58;
+    gMCards.forEach((m, i) => {
+      const gx = ML + i * (gCW + 8);
+      doc.roundedRect(gx, Y, gCW, gCH, 4).fill(C.card);
+      doc.rect(gx, Y, 3, gCH).fill(m.clr);
+      doc.fontSize(7).fillColor(C.secondary).font('Helvetica-Bold').text(m.label, gx + 10, Y + 10, { width: gCW - 14 });
+      doc.fontSize(20).fillColor(C.primary).font('Helvetica-Bold').text(m.value, gx + 10, Y + 24, { width: gCW - 14 });
+    });
+    Y += gCH + 20;
+
+    const actGoals = snapshot.goals.filter((g: any) => !isGoalCompleted(g) || g.progress >= 100);
+    // Display all goals in the active list if they have progress, but properly mark them as COMPLETED.
+    // Actually, it's better to show completed goals in the COMPLETED GOALS section only, or mark them correctly.
+    // Let's just separate them strictly.
+    const strictActGoals = snapshot.goals.filter((g: any) => !isGoalCompleted(g));
+    const strictCmpGoals = snapshot.goals.filter((g: any) => isGoalCompleted(g));
+    
+    subTitle('ACTIVE GOALS', 12);
+    if (!strictActGoals.length) {
+      doc.fontSize(9).fillColor(C.secondary).font('Helvetica').text('No active savings goals.', ML + 10, Y); Y += 24;
+    } else {
+      const GC = [ML, ML + 100, ML + 188, ML + 270, ML + 350, ML + 424];
+      doc.fontSize(7.5).fillColor(C.accent).font('Helvetica-Bold');
+      doc.text('GOAL',      GC[0]+8, Y, { width: 90 });
+      doc.text('SAVED',     GC[1],   Y, { width: 83, align: 'right' });
+      doc.text('TARGET',    GC[2],   Y, { width: 77, align: 'right' });
+      doc.text('REMAINING', GC[3],   Y, { width: 68, align: 'right' });
+      doc.text('PROGRESS',  GC[4],   Y, { width: 68 });
+      doc.text('STATUS',    GC[5],   Y, { width: CW-(GC[5]-ML) });
+      Y += 14; hLine(ML, ML + CW, C.accent, 1); Y += 8;
+
+      strictActGoals.forEach((g: any, i: number) => {
+        ensureSpace(46);
+        if (i % 2 === 0) doc.rect(ML, Y - 3, CW, 42).fill(C.card);
+        const pct = Math.min(Math.floor(g.progress || 0), 100);
+        const isOD = g.targetDate && new Date(g.targetDate) < new Date();
+        const tdStr = g.targetDate ? new Date(g.targetDate).toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : 'No date';
+        doc.fontSize(9).fillColor(C.primary).font('Helvetica-Bold')
+          .text(g.name.length > 16 ? g.name.slice(0,14)+'...' : g.name, GC[0]+8, Y, { width: 90 });
+        doc.fontSize(9).fillColor(C.primary).font('Helvetica').text(fmt(g.savedAmount), GC[1], Y, { width: 83, align: 'right' });
+        doc.fontSize(9).fillColor(C.secondary).font('Helvetica').text(fmt(g.targetAmount), GC[2], Y, { width: 77, align: 'right' });
+        doc.fontSize(9).fillColor(C.primary).font('Helvetica').text(fmt(g.remainingAmount), GC[3], Y, { width: 68, align: 'right' });
+        const bX = GC[4], bW = 56, bF = bW * (pct / 100);
+        doc.rect(bX, Y+4, bW, 4).fill(C.bar);
+        if (bF > 0) doc.rect(bX, Y+4, bF, 4).fill(pct >= 100 ? C.positive : C.accent);
+        doc.fontSize(7.5).fillColor(isOD ? C.negative : C.positive).font('Helvetica-Bold').text(pct + '%', bX, Y+12, { width: bW });
+        doc.fontSize(8.5).fillColor(isOD ? C.negative : C.secondary).font('Helvetica')
+          .text(isOD ? 'OVERDUE' : 'ACTIVE', GC[5], Y, { width: CW-(GC[5]-ML) });
+        doc.fontSize(7.5).fillColor(C.secondary).font('Helvetica').text(tdStr, GC[5], Y+13, { width: CW-(GC[5]-ML) });
+        Y += 44; hLineAt(Y - 6, ML, ML + CW, C.divider, 0.3);
+      });
+    }
+    Y += 12;
+
+    if (snapshot.goals.length > 0) {
+      subTitle('GOAL PROGRESS DETAIL', 12);
+      snapshot.goals.forEach((g: any) => {
+        ensureSpace(94);
+        const pct = Math.min(Math.floor(g.progress || 0), 100);
+        const isCmp = isGoalCompleted(g);
+        const isOD = !isCmp && g.targetDate && new Date(g.targetDate) < new Date();
+        doc.roundedRect(ML, Y, CW, 84, 5).fill(C.card);
+        doc.rect(ML, Y, 4, 84).fill(isCmp ? C.positive : isOD ? C.negative : C.accent);
+        const gInX = ML + 18;
+        doc.fontSize(11).fillColor(C.primary).font('Helvetica-Bold').text(g.name.toUpperCase(), gInX, Y+10, { width: CW-90 });
+        const sLabel = isCmp ? 'COMPLETED' : isOD ? 'OVERDUE' : 'ACTIVE';
+        const sColor = isCmp ? C.positive : isOD ? C.negative : C.accent;
+        doc.fontSize(7.5).fillColor(sColor).font('Helvetica-Bold').text(sLabel, ML+CW-82, Y+10, { width: 74, align: 'right' });
+        const pbW = CW - 110, pbH = 4;
+        doc.rect(gInX, Y+34, pbW, pbH).fill(C.bar);
+        const pbF = pbW * (pct / 100);
+        if (pbF > 0) doc.rect(gInX, Y+34, pbF, pbH).fill(isCmp ? C.positive : C.accent);
+        doc.fontSize(9).fillColor(C.primary).font('Helvetica-Bold').text(pct + '%', gInX+pbW+10, Y+30, { width: 40 });
+        const sy = Y + 54;
+        doc.fontSize(8.5).fillColor(C.secondary).font('Helvetica').text('Saved: ' + fmt(g.savedAmount), gInX, sy);
+        doc.fontSize(8.5).fillColor(C.secondary).font('Helvetica').text('Target: ' + fmt(g.targetAmount), gInX+155, sy);
+        doc.fontSize(8.5).fillColor(C.secondary).font('Helvetica').text('Remaining: ' + fmt(Math.max(0, g.targetAmount - g.savedAmount)), gInX+305, sy);
+        Y += 94;
+      });
+    }
+
+    Y += 8;
+    ensureSpace(60); subTitle('COMPLETED GOALS', 10);
+    if (!strictCmpGoals.length) {
+      doc.fontSize(9).fillColor(C.secondary).font('Helvetica').text('No completed goals yet.', ML + 10, Y); Y += 24;
+    } else {
+      doc.fontSize(7.5).fillColor(C.accent).font('Helvetica-Bold');
+      doc.text('GOAL NAME',  ML+8,  Y, { width: 195 });
+      doc.text('TARGET',     ML+205, Y, { width: 105, align: 'right' });
+      doc.text('SAVED',      ML+320, Y, { width: 105, align: 'right' });
+      doc.text('COMPLETION', ML+435, Y, { width: CW-435 });
+      Y += 13; hLine(ML, ML + CW, C.accent, 1); Y += 7;
+      strictCmpGoals.forEach((g: any, i: number) => {
+        ensureSpace(22);
+        if (i % 2 === 0) doc.rect(ML, Y-2, CW, 22).fill(C.card);
+        const pct = Math.min(g.targetAmount > 0 ? (g.savedAmount / g.targetAmount) * 100 : 100, 100);
+        doc.fontSize(9).fillColor(C.positive).font('Helvetica-Bold').text(g.name, ML+8, Y, { width: 195 });
+        doc.fontSize(9).fillColor(C.secondary).font('Helvetica').text(fmt(g.targetAmount), ML+205, Y, { width: 105, align: 'right' });
+        doc.fontSize(9).fillColor(C.primary).font('Helvetica').text(fmt(g.savedAmount), ML+320, Y, { width: 105, align: 'right' });
+        doc.fontSize(9).fillColor(C.positive).font('Helvetica-Bold').text(pct.toFixed(0) + '%', ML+435, Y, { width: CW-435 });
+        Y += 22; hLineAt(Y-4, ML, ML+CW, C.divider, 0.3);
+      });
+    }
+    Y += 20;
+
+    // PAGE 4 - Source Analysis + Goal-Linked + Unassigned + Forecast + Insights
+    if (Y > MT + 80) addPage();
+
+    sectionTitle('SAVINGS SOURCE ANALYSIS', 12);
+    if (!snapshot.sources.length) {
+      doc.fontSize(9).fillColor(C.secondary).font('Helvetica').text('No source data.', ML+10, Y); Y += 24;
+    } else {
+      const srcMax = Math.max(...snapshot.sources.map((s: any) => s.impact), 1);
+      snapshot.sources.forEach((s: any) => {
+        ensureSpace(30);
+        // Reduce bar width to make room for text
+        const bw = CW - 240, bf = bw * (s.impact / srcMax);
+        doc.fontSize(9).fillColor(C.primary).font('Helvetica').text(s.label, ML+8, Y+3, { width: 110 });
+        doc.rect(ML+125, Y+5, bw, 6).fill(C.bar); // Minimal bar
+        if (bf > 0) doc.rect(ML+125, Y+5, bf, 6).fill(C.accent);
+        doc.fontSize(8.5).fillColor(C.primary).font('Helvetica-Bold').text(fmt(s.impact), ML+135+bw, Y+3, { width: 100, align: 'right' });
+        Y += 24;
+      });
+    }
+    Y += 10;
+
+    ensureSpace(100); sectionTitle('GOAL-LINKED SAVINGS DISTRIBUTION', 12);
+    if (!snapshot.goalLinkedSavings || !snapshot.goalLinkedSavings.length) {
+      doc.fontSize(9).fillColor(C.secondary).font('Helvetica').text('No savings linked to goals.', ML+10, Y); Y += 24;
+    } else {
+      const glMax = Math.max(...snapshot.goalLinkedSavings.map((g: any) => g.totalLinked), 1);
+      snapshot.goalLinkedSavings.forEach((gl: any, i: number) => {
+        ensureSpace(30);
+        if (i % 2 === 0) doc.rect(ML, Y-2, CW, 26).fill(C.card);
+        const bw = CW - 240, bf = bw * (gl.totalLinked / glMax);
+        doc.fontSize(9).fillColor(C.primary).font('Helvetica-Bold').text(gl.goalName, ML+8, Y+5, { width: 110 });
+        doc.rect(ML+125, Y+7, bw, 6).fill(C.bar);
+        if (bf > 0) doc.rect(ML+125, Y+7, bf, 6).fill(C.accent);
+        doc.fontSize(8.5).fillColor(C.primary).font('Helvetica').text(fmt(gl.totalLinked), ML+135+bw, Y+4, { width: 100, align: 'right' });
+        Y += 24;
+      });
+    }
+    Y += 12;
+
+    ensureSpace(70); sectionTitle('UNASSIGNED SAVINGS', 12);
+    const unPct = snapshot.summary.totalAllTime > 0
+      ? ((snapshot.unassignedTotal / snapshot.summary.totalAllTime) * 100).toFixed(1) : '0.0';
+    doc.roundedRect(ML, Y, CW, 52, 5).fill(C.card);
+    doc.rect(ML, Y, 3, 52).fill(C.secondary);
+    doc.fontSize(10).fillColor(C.secondary).font('Helvetica').text('Total Unassigned Savings', ML+16, Y+10);
+    doc.fontSize(20).fillColor(C.primary).font('Helvetica-Bold').text(fmt(snapshot.unassignedTotal), ML+16, Y+26);
+    doc.fontSize(9).fillColor(C.secondary).font('Helvetica').text(unPct + '% of total savings', ML+CW-175, Y+22);
+    Y += 66;
+
+    if (snapshot.forecast) {
+      ensureSpace(110); sectionTitle('SAVINGS FORECAST', 12);
+      const fcData = [
+        { label: 'Current',   val: snapshot.forecast.current },
+        { label: '3 Months',  val: snapshot.forecast.threeMonths },
+        { label: '6 Months',  val: snapshot.forecast.sixMonths },
+        { label: '12 Months', val: snapshot.forecast.twelveMonths },
+      ];
+      const fcW = (CW - 24) / 4;
+      fcData.forEach((fc, i) => {
+        const fx = ML + i * (fcW + 8);
+        doc.roundedRect(fx, Y, fcW, 66, 4).fill(C.card);
+        doc.rect(fx, Y, 3, 66).fill(i === 0 ? C.secondary : C.accent);
+        doc.fontSize(7).fillColor(C.secondary).font('Helvetica-Bold').text(fc.label, fx+10, Y+10, { width: fcW-14 });
+        doc.fontSize(13).fillColor(C.primary).font('Helvetica-Bold').text(fmt(fc.val), fx+10, Y+26, { width: fcW-14 });
+        if (i > 0 && snapshot.forecast) {
+          const gr = fc.val - snapshot.forecast.current;
+          doc.fontSize(7.5).fillColor(gr >= 0 ? C.positive : C.negative).font('Helvetica')
+            .text(fmtSigned(gr), fx+10, Y+50, { width: fcW-14 });
+        }
+      });
+      Y += 80;
+    } else {
+      ensureSpace(48);
+      doc.fontSize(9).fillColor(C.secondary).font('Helvetica')
+        .text('Not enough historical data for a reliable savings forecast.', ML+10, Y, { width: CW-20 });
+      Y += 36;
+    }
+
+    ensureSpace(160); sectionTitle('SAVINGS INSIGHTS', 12);
+    const insRows = [
+      ['Total Savings',          fmt(snapshot.insights.totalSavings)],
+      ['Largest Savings Source', snapshot.insights.largestSource || 'N/A'],
+      ['Active Goals',           snapshot.insights.activeGoals.toString()],
+      ['Completed Goals',        snapshot.insights.completedGoals.toString()],
+      ['Largest Single Saving',  fmt(snapshot.insights.largestSingle)],
+      ['Average Saving',         fmt(snapshot.insights.averageSaving)],
+      ['Best Savings Month',     snapshot.insights.mostSavedMonth || 'N/A'],
+    ];
+    const iCW = (CW - 12) / 2;
+    let iCol = 0, iRowY = Y;
+    insRows.forEach(row => {
+      ensureSpace(38);
+      const ix = ML + iCol * (iCW + 12), iy = iRowY;
+      doc.roundedRect(ix, iy, iCW, 36, 4).fill(C.card);
+      doc.fontSize(7.5).fillColor(C.secondary).font('Helvetica').text(row[0], ix+10, iy+8, { width: iCW-14 });
+      doc.fontSize(11).fillColor(C.primary).font('Helvetica-Bold').text(row[1], ix+10, iy+20, { width: iCW-14 });
+      iCol++;
+      if (iCol === 2) { iCol = 0; iRowY += 42; }
+    });
+    if (iCol !== 0) iRowY += 42;
+    Y = iRowY + 12;
+
+    // FINAL PAGES - Transaction History
+    addPage();
+    sectionTitle('SAVINGS TRANSACTION HISTORY', 12);
+
+    doc.roundedRect(ML, Y, CW, 38, 4).fill(C.card);
+    doc.fontSize(9).fillColor(C.secondary).font('Helvetica').text('Total Unassigned (no goal linked):', ML+12, Y+10);
+    doc.fontSize(9).fillColor(C.primary).font('Helvetica-Bold')
+      .text(fmt(snapshot.unassignedTotal), ML+12, Y+10, { width: CW-14, align: 'right' });
+    doc.fontSize(7.5).fillColor(C.secondary).font('Helvetica')
+      .text(snapshot.transactions.length + ' total records', ML+12, Y+24);
+    Y += 50;
+
+    const TC = { date: ML, name: ML+72, src: ML+228, goal: ML+298, type: ML+390, amt: ML+430 };
+
+    const drawTxH = () => {
+      ensureSpace(28);
+      doc.fontSize(7.5).fillColor(C.accent).font('Helvetica-Bold');
+      doc.text('DATE',       TC.date, Y, { width: 69 });
+      doc.text('NAME / NOTE', TC.name, Y, { width: 153 });
+      doc.text('SOURCE',     TC.src,  Y, { width: 67 });
+      doc.text('GOAL',       TC.goal, Y, { width: 89 });
+      doc.text('TYPE',       TC.type, Y, { width: 37 });
+      doc.text('AMOUNT',     TC.amt,  Y, { width: CW-(TC.amt-ML), align: 'right' });
+      Y += 13; hLine(ML, ML+CW, C.accent, 1); Y += 7;
+    };
+    drawTxH();
+
+    if (!snapshot.transactions || !snapshot.transactions.length) {
+      doc.fontSize(9).fillColor(C.secondary).font('Helvetica').text('No savings transactions found.', ML+10, Y); Y += 30;
+    } else {
+      snapshot.transactions.forEach((tx: any, i: number) => {
+        if (ensureSpace(22)) drawTxH();
+        if (i % 2 === 0) doc.rect(ML, Y-2, CW, 20).fill(C.card);
+
+        let txDate = '';
+        try {
+          const d = new Date(tx.date);
+          txDate = isNaN(d.getTime()) ? '' : d.toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' });
+        } catch (e) { txDate = ''; }
+
+        let nn = tx.name || '';
+        if (tx.note && tx.note.trim()) nn += ' - ' + tx.note.trim();
+        if (nn.length > 28) nn = nn.slice(0, 25) + '...';
+
+        const srcL = tx.source ? tx.source.charAt(0) + tx.source.slice(1).toLowerCase().replace(/_/g, ' ') : 'Other';
+        const srcS = srcL.length > 12 ? srcL.slice(0, 10) + '.' : srcL;
+
+        let gLabel = '';
+        if (tx.goalId) {
+          const gf = snapshot.goals.find((g: any) => g.id === tx.goalId);
+          if (gf) gLabel = (gf as any).name.length > 14 ? (gf as any).name.slice(0,12)+'...' : (gf as any).name;
+        }
+
+        const tS = tx.type ? tx.type.charAt(0) + tx.type.slice(1).toLowerCase().slice(0, 6) : '';
+
+        doc.fontSize(8.5).fillColor(C.secondary).font('Helvetica').text(txDate, TC.date, Y, { width: 69 });
+        doc.fontSize(8.5).fillColor(C.primary).font('Helvetica').text(nn, TC.name, Y, { width: 153 });
+        doc.fontSize(8.5).fillColor(C.secondary).font('Helvetica').text(srcS, TC.src, Y, { width: 67 });
+        doc.fontSize(8.5).fillColor(tx.goalId ? C.accent : C.secondary).font('Helvetica')
+          .text(gLabel || '', TC.goal, Y, { width: 89 });
+        doc.fontSize(7.5).fillColor(C.secondary).font('Helvetica').text(tS, TC.type, Y, { width: 37 });
+        doc.fontSize(8.5).fillColor(C.primary).font('Helvetica-Bold')
+          .text(fmt(tx.amount), TC.amt, Y, { width: CW-(TC.amt-ML), align: 'right' });
+        Y += 20; hLineAt(Y-4, ML, ML+CW, C.divider, 0.3);
+      });
+    }
+    Y += 16;
+
+    ensureSpace(80); Y += 10;
+    hLine(ML, ML+CW, C.divider, 0.5); Y += 16;
+    doc.fontSize(9).fillColor(C.accent).font('Helvetica-Bold').text('REPORT NOTE', ML, Y); Y += 14;
+    doc.fontSize(8).fillColor(C.secondary).font('Helvetica').text(
+      'This report is generated from the live financial data in your FinWise AI account. ' +
+      'All figures are in Indian Rupees (INR). Goal progress reflects savings linked to each goal via goalId. ' +
+      'Forecasting uses average monthly savings over the last 6 months. For personal financial awareness only.',
+      ML, Y, { width: CW }
+    );
+    Y += 44;
+
+    ensureSpace(40);
+    if (hasLogo) { doc.image(logoPath, ML, Y, { height: 22 }); Y += 30; }
+    doc.fontSize(8).fillColor(C.secondary).font('Helvetica')
+      .text('Generated by FinWise AI  |  ' + genDate + '  |  ' + userName, ML, Y, { width: CW, align: 'center' });
+
+    drawAllFooters();
     doc.end();
+    } catch (error) {
+      console.error('generateSavingsReportPDF Error:', error);
+      if (!res.headersSent) {
+        res.status(500).json({ success: false, message: 'PDF generation failed' });
+      } else if (!res.writableEnded) {
+        res.end();
+      }
+    }
   }
 }

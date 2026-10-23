@@ -7,6 +7,7 @@ import { LineChart, Line, AreaChart, Area, XAxis, YAxis, Tooltip as RechartsTool
 import { ArrowRight, X, Target, TrendingUp, FileText, ChevronRight, Check } from 'lucide-react';
 import '../../styles/savings.css';
 import { getToken } from '../../utils/auth';
+import { apiClient } from '../../api/client';
 // Animated Number Component
 const AnimatedNumber = ({ value, prefix = '', suffix = '' }: { value: number, prefix?: string, suffix?: string }) => {
   const [current, setCurrent] = useState(0);
@@ -217,25 +218,28 @@ export const Savings: React.FC = () => {
     } else if (type === 'report') {
       try {
         setIsSubmitting(true);
-        const token = getToken();
-        const response = await fetch('http://localhost:5000/api/savings/report/pdf', {
-          headers: { Authorization: `Bearer ${token}` }
+        const response = await apiClient.get('/savings/report/pdf', {
+          responseType: 'blob'
         });
         
-        if (!response.ok) {
-          throw new Error('Failed to generate report');
+        if (response.status !== 200) {
+          throw new Error('Unable to generate savings report. Please try again.');
         }
         
-        const blob = await response.blob();
+        const blob = response.data;
+        if (!blob || blob.size === 0) {
+          throw new Error('Unable to generate savings report. Please try again.');
+        }
+        
         const url = window.URL.createObjectURL(blob);
         window.open(url, '_blank');
         
         setSuccessType(type);
         setTimeout(() => {
           closePanel();
-        }, 2000);
+        }, 2500);
       } catch (e: any) {
-        alert(e.message || 'Error downloading report');
+        alert(e.message || 'Unable to generate savings report. Please try again.');
       } finally {
         setIsSubmitting(false);
       }
@@ -1033,18 +1037,40 @@ export const Savings: React.FC = () => {
               <div className="qa-panel-content" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
                 {successType !== 'report' ? (
                   <>
-                    <h2 style={{ fontFamily: 'var(--font-primary)', fontSize: '1.5rem', marginBottom: '40px', textTransform: 'uppercase' }}>MONTHLY REPORT</h2>
+                    <h2 style={{ fontFamily: 'var(--font-primary)', fontSize: '1.4rem', marginBottom: '28px', textTransform: 'uppercase' }}>SAVINGS REPORT</h2>
                     
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '24px', marginBottom: '48px' }}>
-                      <div style={{ textAlign: 'center', padding: '24px', background: 'rgba(255,255,255,0.02)', borderRadius: '8px' }}>
-                         <FileText size={48} color="var(--accent-gold)" style={{ opacity: 0.8, marginBottom: '16px' }} />
-                         <h3 style={{ fontSize: '1.25rem', fontFamily: 'var(--font-primary)' }}>August 2026 Report Ready</h3>
-                         <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', marginTop: '8px' }}>Your comprehensive savings and optimization report has been generated and is ready to download.</p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', marginBottom: '36px' }}>
+                      <div style={{ textAlign: 'center', padding: '24px', background: 'rgba(227,184,115,0.05)', border: '1px solid rgba(227,184,115,0.15)', borderRadius: '10px' }}>
+                        <FileText size={44} color="var(--accent-gold)" style={{ opacity: 0.85, marginBottom: '12px' }} />
+                        <h3 style={{ fontSize: '1rem', fontFamily: 'var(--font-primary)', marginBottom: '8px' }}>FinWise AI — Savings & Goals Report</h3>
+                        <p style={{ color: 'var(--text-secondary)', fontSize: '0.8rem', lineHeight: 1.6 }}>A professional multi-page financial report generated from your live data — in dark FinWise style.</p>
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                        {['Executive Summary','Growth Chart','Goal Progress','Monthly Breakdown','Source Analysis','Transaction History'].map(f => (
+                          <div key={f} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '8px 12px', background: 'rgba(255,255,255,0.03)', borderRadius: '6px' }}>
+                            <Check size={12} color="var(--accent-gold)" />
+                            <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>{f}</span>
+                          </div>
+                        ))}
                       </div>
                     </div>
 
-                    <button className="ai-action-btn" style={{ marginTop: 'auto', background: 'var(--text-primary)', color: '#000', justifyContent: 'center' }} onClick={() => handleSuccessAction('report')}>
-                      DOWNLOAD PDF
+                    <button 
+                      className="ai-action-btn" 
+                      style={{ 
+                        marginTop: 'auto', 
+                        background: isSubmitting ? 'rgba(227,184,115,0.5)' : 'var(--accent-gold)', 
+                        color: '#000', 
+                        justifyContent: 'center',
+                        gap: '10px',
+                        cursor: isSubmitting ? 'not-allowed' : 'pointer',
+                        fontWeight: 700,
+                      }} 
+                      onClick={() => !isSubmitting && handleSuccessAction('report')}
+                      disabled={isSubmitting}
+                    >
+                      <FileText size={16} />
+                      {isSubmitting ? 'GENERATING REPORT...' : 'VIEW REPORT'}
                     </button>
                   </>
                 ) : (
@@ -1052,8 +1078,8 @@ export const Savings: React.FC = () => {
                     <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: 'rgba(46, 204, 113, 0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '24px' }}>
                       <Check size={32} color="var(--text-positive)" strokeWidth={3} />
                     </div>
-                    <h3 style={{ fontFamily: 'var(--font-primary)', fontSize: '1.5rem', marginBottom: '8px' }}>Downloaded!</h3>
-                    <p style={{ color: 'var(--text-secondary)' }}>Your PDF report is downloading to your device.</p>
+                    <h3 style={{ fontFamily: 'var(--font-primary)', fontSize: '1.5rem', marginBottom: '8px' }}>Report Opened!</h3>
+                    <p style={{ color: 'var(--text-secondary)' }}>Your FinWise AI Savings & Goals Report has been generated and opened in a new tab.</p>
                   </div>
                 )}
               </div>

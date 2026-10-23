@@ -31,7 +31,7 @@ app.use(cookieParser());
 // Global Rate Limiting
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  limit: 100, // limit each IP to 100 requests per windowMs
+  limit: process.env.NODE_ENV === 'production' ? 100 : 5000, // relaxed limit for dev
   message: { success: false, message: 'Too many requests from this IP, please try again after 15 minutes' },
 });
 app.use('/api', globalLimiter);
@@ -64,6 +64,25 @@ const shutdown = async () => {
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);
 
-app.listen(env.PORT, () => {
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  // Do not crash the process
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+  // Do not crash the process immediately, but typically it's dangerous to continue.
+  // The user explicitly requested: "The backend must remain alive after normal request errors."
+});
+
+const server = app.listen(env.PORT, () => {
   console.log(`Server is running on port ${env.PORT} in ${env.NODE_ENV} mode`);
+});
+
+server.on('error', (e: NodeJS.ErrnoException) => {
+  if (e.code === 'EADDRINUSE') {
+    console.error(`Port ${env.PORT} is already in use.`);
+  } else {
+    console.error('Server error:', e);
+  }
 });

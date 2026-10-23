@@ -1,10 +1,36 @@
 import React from 'react';
 import { AnimatedNumber } from '../dashboard/AnimatedNumber';
+import { useDashboard } from '../../context/DashboardContext';
 
-export const FinancialHealth: React.FC<{ score: number }> = ({ score }) => {
+export const FinancialHealth: React.FC = () => {
+  const { summary } = useDashboard();
+  const health = summary.data?.health;
+
+  const score = health?.score ?? 0;
+  const label = health?.label ?? '—';
+  const factors = health?.factors ?? [];
+  const breakdown = health?.breakdown ?? {};
+
   const radius = 60;
   const circumference = 2 * Math.PI * radius;
   const offset = circumference - (score / 100) * circumference;
+
+  if (summary.loading && !summary.data) {
+    return (
+      <div className="glass-card health-card anim-fade-up delay-8">
+        <h3 className="card-title">FINANCIAL HEALTH</h3>
+        <div style={{ textAlign: 'center', padding: '40px 0', color: 'var(--text-muted)', fontSize: '0.9rem' }}>Loading…</div>
+      </div>
+    );
+  }
+
+  // Derive health bar values from breakdown
+  const barData = [
+    { label: 'Spending', score: breakdown.spending },
+    { label: 'Saving', score: breakdown.savings },
+    { label: 'Investing', score: breakdown.investments },
+    { label: 'Budget', score: breakdown.budgetAdherence },
+  ];
 
   return (
     <div className="glass-card health-card anim-fade-up delay-8">
@@ -41,17 +67,24 @@ export const FinancialHealth: React.FC<{ score: number }> = ({ score }) => {
           </svg>
           <div className="health-score-text">
             <span className="health-num"><AnimatedNumber value={score.toString()} trigger={true} duration={2000} /></span>
-            <span className="health-status">HEALTHY</span>
+            <span className="health-status">{label}</span>
           </div>
         </div>
 
         <div className="health-bars">
-          <HealthBar label="Spending" active={8} />
-          <HealthBar label="Saving" active={9} />
-          <HealthBar label="Investing" active={7} />
-          <HealthBar label="Planning" active={8} />
+          {barData.map(item => (
+            <HealthBar key={item.label} label={item.label} active={item.score !== null && item.score !== undefined ? Math.round(item.score / 10) : 0} />
+          ))}
         </div>
       </div>
+
+      {factors.length > 0 && (
+        <div style={{ marginTop: '12px', fontSize: '0.75rem', color: 'var(--text-muted)', lineHeight: 1.6 }}>
+          {factors.slice(0, 3).map((f, i) => (
+            <div key={i}>• {f}</div>
+          ))}
+        </div>
+      )}
     </div>
   );
 };

@@ -10,50 +10,54 @@ import { FinancialHealthScore } from '../../components/reports/FinancialHealthSc
 import { ReportPreviewArea } from '../../components/reports/ReportPreviewArea';
 import { RecentReportsList } from '../../components/reports/RecentReportsList';
 import { ReportPreviewModal } from '../../components/reports/ReportPreviewModal';
+import { ReportProvider, useReportContext } from '../../contexts/ReportContext';
 
-const Reports: React.FC = () => {
+
+const ReportsContent: React.FC = () => {
   const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
-
-  useEffect(() => {
-    window.scrollTo(0, 0);
-  }, []);
+  const { error } = useReportContext();
 
   return (
     <div className="reports-page-wrapper">
       <div className="reports-content-grid">
-        
         <ReportHero />
-        
         <ReportControls />
 
-        <div className="anim-fade-up delay-1">
-          <ReportSnapshot />
-        </div>
+        {error ? (
+          <div className="report-error-state" style={{ color: '#E74C3C', padding: '2rem', textAlign: 'center', gridColumn: '1 / -1', background: '#14171C', borderRadius: '12px' }}>
+            {error}
+          </div>
+        ) : (
+          <>
+            <div className="anim-fade-up delay-1">
+              <ReportSnapshot />
+            </div>
 
-        <div className="anim-fade-up delay-2">
-          <CashFlowChart />
-        </div>
+            <div className="anim-fade-up delay-2">
+              <CashFlowChart />
+            </div>
 
-        <div className="anim-fade-up delay-3">
-          <ExpenseDistribution />
-        </div>
+            <div className="anim-fade-up delay-3">
+              <ExpenseDistribution />
+            </div>
 
-        <div className="anim-fade-up delay-4">
-          <SavingsAndGoals />
-        </div>
+            <div className="anim-fade-up delay-4">
+              <SavingsAndGoals />
+            </div>
 
-        <div className="anim-fade-up delay-5">
-          <FinancialHealthScore />
-        </div>
+            <div className="anim-fade-up delay-5">
+              <FinancialHealthScore />
+            </div>
 
-        <div className="anim-fade-up delay-6">
-          <ReportPreviewArea onOpenPreview={() => setIsPreviewModalOpen(true)} />
-        </div>
+            <div className="anim-fade-up delay-6">
+              <ReportPreviewArea onOpenPreview={() => setIsPreviewModalOpen(true)} />
+            </div>
 
-        <div className="anim-fade-up delay-7">
-          <RecentReportsList onOpenPreview={() => setIsPreviewModalOpen(true)} />
-        </div>
-
+            <div className="anim-fade-up delay-7">
+              <RecentReportsList onOpenPreview={() => setIsPreviewModalOpen(true)} />
+            </div>
+          </>
+        )}
       </div>
 
       <ReportPreviewModal 
@@ -61,6 +65,18 @@ const Reports: React.FC = () => {
         onClose={() => setIsPreviewModalOpen(false)} 
       />
     </div>
+  );
+};
+
+const Reports: React.FC = () => {
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, []);
+
+  return (
+    <ReportProvider>
+      <ReportsContent />
+    </ReportProvider>
   );
 };
 

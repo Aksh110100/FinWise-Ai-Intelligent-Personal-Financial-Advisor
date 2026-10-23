@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getToken } from '../utils/auth';
+import { apiClient } from '../api/client';
 
 export const useRoomToSave = () => {
   const [data, setData]     = useState<any>(null);
@@ -11,21 +11,10 @@ export const useRoomToSave = () => {
       setLoading(true);
       setError(null);
 
-      const token = getToken();
-      if (!token) {
-        setData(null);
-        return;
-      }
+      const res = await apiClient.get('/expenses/analytics/room-to-save');
+      const result = res.data;
 
-      const res    = await fetch('http://localhost:5000/api/expenses/analytics/room-to-save', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      // sendSuccess() spreads the service return object into the response body,
-      // so all fields (readiness, potentialMonthlySavings, categories, …) sit
-      // at the TOP LEVEL of the JSON — not nested under a "data" key.
-      const result = await res.json();
-
-      if (res.ok && result.success) {
+      if (result.success) {
         // Destructure to omit the envelope fields; keep only domain data.
         const { success, message, ...domainData } = result;
         setData(domainData);
@@ -47,3 +36,4 @@ export const useRoomToSave = () => {
 
   return { data, loading, error, refresh: fetchRoomToSave };
 };
+

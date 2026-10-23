@@ -1287,8 +1287,8 @@
 }
 
 .qa-btn-primary {
-  background: var(--text-primary);
-  color: var(--bg-primary);
+  background: #C9A46C;
+  color: #050505;
   border: none;
   padding: 14px 24px;
   border-radius: 8px;

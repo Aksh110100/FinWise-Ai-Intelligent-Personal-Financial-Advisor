@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Download, ChevronDown } from 'lucide-react';
+import { useReportContext } from '../../contexts/ReportContext';
 
 interface CustomDropdownProps {
   value: string;
@@ -54,23 +55,15 @@ const CustomDropdown: React.FC<CustomDropdownProps> = ({ value, options, onChang
 };
 
 export const ReportControls: React.FC = () => {
-  const [reportType, setReportType] = useState('Financial Overview');
-  const [period, setPeriod] = useState('August 2026');
-  const [compare, setCompare] = useState('Previous Month');
+  const { period, setPeriod, compare, setCompare, reportType, setReportType } = useReportContext();
 
   const reportTypeOptions = [
     { label: 'Financial Overview', value: 'Financial Overview' },
-    { label: 'Expense Analysis', value: 'Expense Analysis' },
-    { label: 'Savings Report', value: 'Savings Report' },
-    { label: 'Investment Summary', value: 'Investment Summary' },
-    { label: 'Goal Progress', value: 'Goal Progress' },
-    { label: 'Complete Financial Report', value: 'Complete Financial Report' },
   ];
 
   const periodOptions = [
     { label: 'This Month', value: 'This Month' },
-    { label: 'August 2026', value: 'August 2026' },
-    { label: 'July 2026', value: 'July 2026' },
+    { label: 'Last Month', value: 'Last Month' },
     { label: 'Last 3 Months', value: 'Last 3 Months' },
     { label: 'Last 6 Months', value: 'Last 6 Months' },
     { label: 'This Year', value: 'This Year' },
@@ -86,30 +79,25 @@ export const ReportControls: React.FC = () => {
   return (
     <div className="report-controls-bar">
       <div className="report-control-group">
-        
         <CustomDropdown 
           value={reportType} 
           options={reportTypeOptions} 
           onChange={setReportType} 
         />
-        
         <CustomDropdown 
           value={period} 
           options={periodOptions} 
           onChange={setPeriod} 
         />
-
         <CustomDropdown 
           value={compare} 
           options={compareOptions} 
           onChange={setCompare} 
         />
-
       </div>
 
-      <button className="report-generate-btn">
-        <Download size={16} />
-        GENERATE REPORT
+      <button className="btn-primary report-generate-btn">
+        <Download size={18} /> GENERATE REPORT
       </button>
     </div>
   );

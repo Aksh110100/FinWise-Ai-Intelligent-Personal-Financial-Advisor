@@ -220,74 +220,108 @@ export class SavingService {
   }
 
   // ── GROWTH CHART ─────────────────────────────────────────────────────────────
-  // Returns cumulative or monthly savings data for charting, keyed by period.
+  // Returns cumulative savings data for charting, keyed by period.
   static async getGrowthData(userId: string, range: string) {
     const now = new Date();
+    const currentYear = now.getUTCFullYear();
+    const currentMonth = now.getUTCMonth();
+    const currentDate = now.getUTCDate();
 
     let start: Date;
-    let groupByMonth = false;
+    const bins: { label: string; start: Date; end: Date }[] = [];
 
-    switch (range) {
-      case '7D':
-        start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() - 6));
-        break;
-      case '1M':
-        start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
-        break;
-      case '3M':
-        start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 2, 1));
-        groupByMonth = true;
-        break;
-      case '6M':
-        start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 5, 1));
-        groupByMonth = true;
-        break;
-      case '1Y':
-      default:
-        start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 11, 1));
-        groupByMonth = true;
-        break;
+    const addDays = (d: Date, days: number) => new Date(d.getTime() + days * 86400000);
+    const getMonthStart = (y: number, m: number) => new Date(Date.UTC(y, m, 1));
+
+    if (range === '7D') {
+      start = new Date(Date.UTC(currentYear, currentMonth, currentDate - 6));
+      for (let i = 0; i < 7; i++) {
+        const d = addDays(start, i);
+        bins.push({
+          label: d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
+          start: d,
+          end: addDays(d, 1)
+        });
+      }
+    } else if (range === '1M') {
+      start = new Date(Date.UTC(currentYear, currentMonth - 1, currentDate));
+      const diffDays = Math.ceil((now.getTime() - start.getTime()) / 86400000) + 1;
+      for (let i = 0; i < diffDays; i++) {
+        const d = addDays(start, i);
+        bins.push({
+          label: d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
+          start: d,
+          end: addDays(d, 1)
+        });
+      }
+    } else if (range === '3M') {
+      start = new Date(Date.UTC(currentYear, currentMonth - 3, currentDate));
+      let current = start;
+      while (current <= now) {
+        const next = addDays(current, 7);
+        bins.push({
+          label: current.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }),
+          start: current,
+          end: next
+        });
+        current = next;
+      }
+    } else if (range === '6M') {
+      start = getMonthStart(currentYear, currentMonth - 5);
+      for (let i = 0; i < 6; i++) {
+        const d = getMonthStart(start.getUTCFullYear(), start.getUTCMonth() + i);
+        bins.push({
+          label: d.toLocaleDateString('en-GB', { month: 'short', year: '2-digit' }),
+          start: d,
+          end: getMonthStart(d.getUTCFullYear(), d.getUTCMonth() + 1)
+        });
+      }
+    } else { // 1Y
+      start = getMonthStart(currentYear, currentMonth - 11);
+      for (let i = 0; i < 12; i++) {
+        const d = getMonthStart(start.getUTCFullYear(), start.getUTCMonth() + i);
+        bins.push({
+          label: d.toLocaleDateString('en-GB', { month: 'short', year: '2-digit' }),
+          start: d,
+          end: getMonthStart(d.getUTCFullYear(), d.getUTCMonth() + 1)
+        });
+      }
     }
 
+    // 1. Get baseline cumulative total before the start date
+    const baseAgg = await prisma.saving.aggregate({
+      where: { userId, date: { lt: start } },
+      _sum: { amount: true }
+    });
+    let cumulative = Number(baseAgg._sum.amount ?? 0);
+
+    // 2. Fetch all savings in the active window
     const savings = await prisma.saving.findMany({
-      where:   { userId, date: { gte: start } },
-      orderBy: { date: 'asc' },
-      select:  { date: true, amount: true },
+      where: { userId, date: { gte: start } },
+      select: { date: true, amount: true }
     });
 
-    if (savings.length === 0) return [];
+    // 3. Map savings to continuous bins
+    const binSums = new Array(bins.length).fill(0);
+    savings.forEach(s => {
+      const sTime = new Date(s.date).getTime();
+      for (let i = 0; i < bins.length; i++) {
+        if (sTime >= bins[i].start.getTime() && sTime < bins[i].end.getTime()) {
+          binSums[i] += Number(s.amount);
+          break;
+        }
+      }
+    });
 
-    if (!groupByMonth) {
-      // Daily aggregation
-      const dayMap = new Map<string, number>();
-      savings.forEach(s => {
-        const key = s.date.toISOString().slice(0, 10);
-        dayMap.set(key, (dayMap.get(key) ?? 0) + Number(s.amount));
-      });
-      // Build cumulative
-      let cumulative = 0;
-      return Array.from(dayMap.entries()).map(([date, amt]) => {
-        cumulative += amt;
-        return { name: new Date(date).toLocaleDateString('en-IN', { weekday: 'short' }), saved: cumulative };
-      });
-    } else {
-      // Monthly aggregation
-      const monthMap = new Map<string, number>();
-      savings.forEach(s => {
-        const key = `${s.date.getUTCFullYear()}-${String(s.date.getUTCMonth() + 1).padStart(2, '0')}`;
-        monthMap.set(key, (monthMap.get(key) ?? 0) + Number(s.amount));
-      });
-      // Build cumulative in chronological order
-      let cumulative = 0;
-      return Array.from(monthMap.entries())
-        .sort()
-        .map(([key, amt]) => {
-          cumulative += amt;
-          const [yr, mo] = key.split('-').map(Number);
-          const label = new Date(yr, mo - 1).toLocaleDateString('en-IN', { month: 'short', year: range === '1Y' ? undefined : '2-digit' });
-          return { name: label, saved: cumulative };
-        });
+    // 4. Generate the fully continuous cumulative array
+    const result = [];
+    for (let i = 0; i < bins.length; i++) {
+      cumulative += binSums[i];
+      result.push({ name: bins[i].label, saved: cumulative });
     }
+
+    // Fallback: If user has literally 0 savings ever, return a flat line at 0 for the bins
+    return result;
   }
 
   // ── BY-TYPE BREAKDOWN ─────────────────────────────────────────────────────────

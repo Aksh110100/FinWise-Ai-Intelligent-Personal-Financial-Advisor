@@ -477,14 +477,14 @@
 }
 
 .premium-btn.primary {
-  background: var(--text-primary);
+  background: #C9A46C;
   color: #050505;
 }
 
 .premium-btn.primary:hover {
-  background: #fff;
+  background: #d4b581;
   transform: translateY(-1px);
-  box-shadow: 0 4px 12px rgba(255, 255, 255, 0.1);
+  box-shadow: 0 4px 12px rgba(201, 164, 108, 0.2);
 }
 
 .premium-btn.ghost {

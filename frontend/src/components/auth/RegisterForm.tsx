@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { setToken } from '../../utils/auth';
-
+import { apiClient } from '../../api/client';
 export const RegisterForm: React.FC<{ isAnimatingOut: boolean }> = ({ isAnimatingOut }) => {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -14,27 +14,16 @@ export const RegisterForm: React.FC<{ isAnimatingOut: boolean }> = ({ isAnimatin
     setError('');
 
     try {
-      const res = await fetch('http://localhost:5000/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ name, email, password })
-      });
-
-      const data = await res.json();
-
-      if (res.ok) {
-        navigate('/login', { state: { successMessage: 'Account created successfully. Please log in.' } });
+      const res = await apiClient.post('/auth/register', { name, email, password });
+      
+      // Axios will throw if status is not 2xx.
+      navigate('/login', { state: { successMessage: 'Account created successfully. Please log in.' } });
+    } catch (err: any) {
+      if (err.response?.status === 409) {
+        setError('An account with this email already exists.');
       } else {
-        // Show actual backend error instead of Network error
-        if (res.status === 409) {
-          setError('An account with this email already exists.');
-        } else {
-          setError(data.message || 'Registration failed');
-        }
+        setError(err.message || 'Registration failed');
       }
-    } catch (err) {
-      setError('Unable to connect to the server. Please try again.');
     }
   };
 

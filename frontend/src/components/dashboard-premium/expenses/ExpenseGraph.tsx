@@ -1,6 +1,5 @@
 import React, { useRef, useState, useEffect, useMemo } from 'react';
-import { getToken } from '../../../utils/auth';
-
+import { apiClient } from '../../../api/client';
 const SVG_WIDTH = 800;
 const SVG_HEIGHT = 240;
 
@@ -25,17 +24,14 @@ export const ExpenseGraph: React.FC<ExpenseGraphProps> = ({ filters }) => {
       try {
         setLoading(true);
         setError(null);
-        const token = getToken();
+        
         const queryParams = new URLSearchParams();
         queryParams.append('range', filters.dateRange || '1M');
         if (filters.category && filters.category !== 'All categories') queryParams.append('categoryName', filters.category);
         if (filters.paymentMethod && filters.paymentMethod !== 'All') queryParams.append('paymentMethod', filters.paymentMethod);
         
-        const res = await fetch(`http://localhost:5000/api/expenses/analytics/spending-overview?${queryParams.toString()}`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        
-        const json = await res.json();
+        const res = await apiClient.get(`/expenses/analytics/spending-overview?${queryParams.toString()}`);
+        const json = res.data;
         
         if (isMounted) {
           if (json.success) {
