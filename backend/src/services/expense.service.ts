@@ -161,7 +161,7 @@ export class ExpenseService {
 
     const expenses = await prisma.expense.findMany({
       where,
-      select: { amount: true, date: true, categoryId: true, Category: { select: { name: true } } },
+      select: { id: true, amount: true, date: true, categoryId: true, Category: { select: { name: true } }, merchant: true },
     });
 
     const totalSpending = expenses.reduce((sum: number, exp: any) => sum + Number(exp.amount), 0);
@@ -174,34 +174,55 @@ export class ExpenseService {
     const dailyAverage = totalSpending / days;
 
     // Largest category
-    const catMap: Record<string, { amount: number, name: string }> = {};
+    const catMap: Record<string, { amount: number, name: string, count: number }> = {};
     expenses.forEach((e: any) => {
-      if (e.categoryId && e.Category) {
-        if (!catMap[e.categoryId]) catMap[e.categoryId] = { amount: 0, name: e.Category.name };
-        catMap[e.categoryId].amount += Number(e.amount);
-      }
+      // Group uncategorized expenses as well
+      const catId = e.categoryId || 'uncategorized';
+      const catName = e.Category?.name || 'Uncategorized';
+      
+      if (!catMap[catId]) catMap[catId] = { amount: 0, name: catName, count: 0 };
+      catMap[catId].amount += Number(e.amount);
+      catMap[catId].count += 1;
     });
 
     let largestCategory = null;
     let maxAmt = 0;
     const categoryBreakdown = [];
     for (const [id, cat] of Object.entries(catMap)) {
-      categoryBreakdown.push({ name: cat.name, amount: cat.amount });
+      categoryBreakdown.push({ name: cat.name, amount: cat.amount, count: cat.count });
       if (cat.amount > maxAmt) {
         maxAmt = cat.amount;
-        largestCategory = { name: cat.name, amount: cat.amount };
+        largestCategory = { name: cat.name, amount: cat.amount, count: cat.count };
       }
     }
 
     // Sort breakdown by amount
     categoryBreakdown.sort((a, b) => b.amount - a.amount);
 
+    let lowestExpense = null;
+    let highestExpense = null;
+    if (expenses.length > 0) {
+      const sortedExpenses = [...expenses].sort((a, b) => Number(a.amount) - Number(b.amount));
+      lowestExpense = {
+        amount: Number(sortedExpenses[0].amount),
+        merchant: sortedExpenses[0].merchant,
+        date: sortedExpenses[0].date
+      };
+      highestExpense = {
+        amount: Number(sortedExpenses[sortedExpenses.length - 1].amount),
+        merchant: sortedExpenses[sortedExpenses.length - 1].merchant,
+        date: sortedExpenses[sortedExpenses.length - 1].date
+      };
+    }
+
     return {
       totalSpending,
       dailyAverage,
       largestCategory,
       categoryBreakdown,
-      transactionCount: expenses.length
+      transactionCount: expenses.length,
+      lowestExpense,
+      highestExpense
     };
   }
 

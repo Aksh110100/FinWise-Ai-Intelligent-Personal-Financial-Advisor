@@ -6,6 +6,9 @@ import {
   savingsQuerySchema,
 } from '../validators/savings.validators';
 import { sendSuccess, sendError } from '../utils/response';
+import { GoalService } from '../services/goal.service';
+import { ReportService } from '../services/report.service';
+import { prisma } from '../config/prisma';
 
 export class SavingController {
   // ── POST /api/savings ────────────────────────────────────────────────────────
@@ -127,54 +130,161 @@ export class SavingController {
   static async getSavingsReport(req: Request, res: Response) {
     try {
       const userId = (req as any).user.id;
-      const user = (req as any).user;
-      
-      const { GoalService } = require('../services/goal.service');
-      const { ReportService } = require('../services/report.service');
-      
+
+      // Fetch full user from DB so name is never "undefined"
+      const dbUser = await prisma.user.findUnique({
+        where: { id: userId },
+        select: { id: true, name: true, email: true, currency: true },
+      });
+      const user = dbUser || { id: userId, name: 'FinWise User', email: '', currency: 'INR' };
+
+      // Core data
       const summary = await SavingService.getSummary(userId);
-      const growth = await SavingService.getGrowthData(userId, 'ALL');
-      const sources = await SavingService.getBreakdown(userId);
-      const goals = await GoalService.getGoals(userId);
-      
-      const allSavings = await SavingService.getSavings(userId, { page: 1, limit: 10000, sortBy: 'date', sortOrder: 'desc' });
+      const goals   = await GoalService.getGoals(userId);
+
+      const allSavings = await SavingService.getSavings(userId,
+        savingsQuerySchema.parse({ page: 1, limit: 10000, sortBy: 'date', sortOrder: 'desc' })
+      );
       const transactions = allSavings.data;
 
-      // Build Monthly Savings explicitly with correct year+month logic
+      // All-time source breakdown
+      const sourceMap = new Map<string, number>();
+      transactions.forEach((tx: any) => {
+        const src = tx.source || 'OTHER';
+        sourceMap.set(src, (sourceMap.get(src) || 0) + Number(tx.amount || 0));
+      });
+      const allTimeSources = Array.from(sourceMap.entries())
+        .sort((a, b) => b[1] - a[1])
+        .map(([source, impact]) => ({
+          source,
+          label: source.charAt(0) + source.slice(1).toLowerCase().replace(/_/g, ' '),
+          impact,
+        }));
+
+      // Growth (cumulative) data with YYYY-MM keys
+      const growthMap = new Map<string, number>();
+      transactions.forEach((tx: any) => {
+        const d = new Date(tx.date);
+        const yyyy = d.getUTCFullYear();
+        const mm   = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const key  = `${yyyy}-${mm}`;
+        growthMap.set(key, (growthMap.get(key) || 0) + Number(tx.amount || 0));
+      });
+      let cumulative = 0;
+      const growth = Array.from(growthMap.entries())
+        .sort()
+        .map(([key, amt]) => {
+          cumulative += amt;
+          const [yr, mo] = key.split('-').map(Number);
+          const label = new Date(yr, mo - 1, 1).toLocaleDateString('en-GB', { month: 'short', year: '2-digit' });
+          return { key, label, saved: cumulative };
+        });
+
+      // Monthly savings with YYYY-MM keys (newest first)
       const monthlyMap = new Map<string, number>();
       transactions.forEach((tx: any) => {
         const d = new Date(tx.date);
-        const yyyy = d.getFullYear();
-        const mm = String(d.getMonth() + 1).padStart(2, '0');
-        const key = `${yyyy}-${mm}`;
+        const yyyy = d.getUTCFullYear();
+        const mm   = String(d.getUTCMonth() + 1).padStart(2, '0');
+        const key  = `${yyyy}-${mm}`;
         monthlyMap.set(key, (monthlyMap.get(key) || 0) + Number(tx.amount || 0));
       });
-      
       const monthlySavings = Array.from(monthlyMap.entries())
-        .sort((a, b) => b[0].localeCompare(a[0])) // newest first
+        .sort((a, b) => b[0].localeCompare(a[0]))
         .map(([key, amount]) => {
-           const [yyyy, mm] = key.split('-');
-           const date = new Date(Number(yyyy), Number(mm) - 1, 1);
-           const monthLabel = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
-           return { monthLabel, amount };
+          const [yr, mo] = key.split('-').map(Number);
+          const monthLabel = new Date(yr, mo - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+          return { key, monthLabel, amount };
         });
 
-      const snapshot = {
-        generatedAt: new Date().toISOString(),
-        user,
-        summary,
-        growth,
-        sources,
-        goals,
-        transactions,
-        monthlySavings,
+      // Goal-linked savings
+      const goalLinkedMap = new Map<string, number>();
+      transactions.forEach((tx: any) => {
+        if (tx.goalId) {
+          goalLinkedMap.set(tx.goalId, (goalLinkedMap.get(tx.goalId) || 0) + Number(tx.amount || 0));
+        }
+      });
+      const goalLinkedSavings = goals
+        .map((g: any) => ({ goalId: g.id, goalName: g.name, totalLinked: goalLinkedMap.get(g.id) || 0 }))
+        .filter((gl: any) => gl.totalLinked > 0);
+
+      // Unassigned savings
+      const unassignedTotal = transactions
+        .filter((tx: any) => !tx.goalId)
+        .reduce((sum: number, tx: any) => sum + Number(tx.amount || 0), 0);
+
+      // Insights
+      const amounts = transactions.map((tx: any) => Number(tx.amount || 0));
+      const largestSingle = amounts.length > 0 ? Math.max(...amounts) : 0;
+      const averageSaving = amounts.length > 0
+        ? amounts.reduce((a: number, b: number) => a + b, 0) / amounts.length : 0;
+      const largestSrc = allTimeSources.length > 0 ? allTimeSources[0].label : 'None';
+
+      let bestMonth = '', bestMonthAmt = 0;
+      monthlyMap.forEach((amt, key) => { if (amt > bestMonthAmt) { bestMonthAmt = amt; bestMonth = key; } });
+      const bestMonthLabel = bestMonth ? (() => {
+        const [yr, mo] = bestMonth.split('-').map(Number);
+        return new Date(yr, mo - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      })() : '';
+
+      const insights = {
+        totalSavings:   summary.totalAllTime,
+        largestSource:  largestSrc,
+        activeGoals:    goals.filter((g: any) => g.status === 'ACTIVE').length,
+        completedGoals: goals.filter((g: any) => g.status === 'COMPLETED').length,
+        largestSingle,
+        averageSaving:  Math.round(averageSaving),
+        mostSavedMonth: bestMonthLabel,
       };
 
+      // Forecast using rolling avg
+      const avgM = summary.avgMonthly || 0;
+      const currentSaved = summary.totalAllTime || 0;
+      const forecast = avgM > 0 ? {
+        current:      currentSaved,
+        threeMonths:  Math.round(currentSaved + avgM * 3),
+        sixMonths:    Math.round(currentSaved + avgM * 6),
+        twelveMonths: Math.round(currentSaved + avgM * 12),
+      } : null;
+
+      // Period
+      let period = 'All-Time';
+      if (transactions.length > 0) {
+        const dates = transactions
+          .map((t: any) => new Date(t.date))
+          .filter((d: Date) => !isNaN(d.getTime()));
+        if (dates.length > 0) {
+          const earliest = new Date(Math.min(...dates.map((d: Date) => d.getTime())));
+          const latest   = new Date(Math.max(...dates.map((d: Date) => d.getTime())));
+          const fmtD = (d: Date) => d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+          period = `${fmtD(earliest)} — ${fmtD(latest)}`;
+        }
+      }
+
+      const snapshot = {
+        generatedAt:      new Date().toISOString(),
+        user,
+        period,
+        summary:          { ...summary, prevMonthTotal: summary.prevMonthTotal ?? 0 },
+        growth,
+        monthlySavings,
+        sources:          allTimeSources,
+        goals,
+        goalLinkedSavings,
+        unassignedTotal,
+        transactions,
+        insights,
+        forecast,
+      };
+
+      const today    = new Date().toISOString().slice(0, 10);
+      const filename = `FinWise-AI-Savings-Report-${today}.pdf`;
+
       res.setHeader('Content-Type', 'application/pdf');
-      res.setHeader('Content-Disposition', 'inline; filename="FinWise-AI-Savings-Report.pdf"');
-      
+      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+
       ReportService.generateSavingsReportPDF(snapshot, res);
-      
+
     } catch (error: any) {
       console.error('getSavingsReport error:', error);
       return sendError(res, 'Internal server error generating report', 500);

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getToken } from '../utils/auth';
+import { apiClient } from '../api/client';
 
 export const useBudgets = (filters: any = {}) => {
   const [budgets, setBudgets] = useState<any[]>([]);
@@ -11,7 +11,6 @@ export const useBudgets = (filters: any = {}) => {
   const fetchBudgets = useCallback(async () => {
     try {
       setLoading(true);
-      const token = getToken();
       
       const queryParams = new URLSearchParams();
       if (filters.month) queryParams.append('month', filters.month);
@@ -19,24 +18,16 @@ export const useBudgets = (filters: any = {}) => {
       if (filters.categoryId) queryParams.append('categoryId', filters.categoryId);
 
       const [listRes, summaryRes, analyticsRes] = await Promise.all([
-        fetch(`http://localhost:5000/api/budgets?${queryParams.toString()}`, {
-          headers: { Authorization: `Bearer ${token}` }
-        }),
-        fetch(`http://localhost:5000/api/budgets/summary?${queryParams.toString()}`, {
-          headers: { Authorization: `Bearer ${token}` }
-        }),
-        fetch(`http://localhost:5000/api/budgets/analytics/budget-vs-actual?months=6`, {
-          headers: { Authorization: `Bearer ${token}` }
-        })
+        apiClient.get(`/budgets?${queryParams.toString()}`),
+        apiClient.get(`/budgets/summary?${queryParams.toString()}`),
+        apiClient.get(`/budgets/analytics/budget-vs-actual?months=6`)
       ]);
 
-      const [listJson, summaryJson, analyticsJson] = await Promise.all([
-        listRes.json(),
-        summaryRes.json(),
-        analyticsRes.json()
-      ]);
+      const listJson = listRes.data;
+      const summaryJson = summaryRes.data;
+      const analyticsJson = analyticsRes.data;
 
-      if (listRes.ok && listJson.success) {
+      if (listJson.success) {
         // Map backend budget format to what frontend expects
         // Frontend expects: category, limit (amount), spent, remaining, period (month), status
         const mappedBudgets = (listJson.data?.data || listJson.data || []).map((b: any) => ({
@@ -55,17 +46,17 @@ export const useBudgets = (filters: any = {}) => {
         setError(listJson.message || 'Failed to fetch budgets');
       }
 
-      if (summaryRes.ok && summaryJson.success) {
+      if (summaryJson.success) {
         setSummary(summaryJson);
       }
 
-      if (analyticsRes.ok && analyticsJson.success) {
+      if (analyticsJson.success) {
         setAnalytics(analyticsJson.data || []);
       }
 
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error fetching budgets:', err);
-      setError('Network error while fetching budgets');
+      setError(err.message || 'Network error while fetching budgets');
     } finally {
       setLoading(false);
     }
@@ -113,57 +104,42 @@ export const useBudgets = (filters: any = {}) => {
       payload.year = now.getFullYear();
     }
 
-    const token = getToken();
-    const res = await fetch('http://localhost:5000/api/budgets', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`
-      },
-      body: JSON.stringify(payload)
-    });
-    
-    if (res.ok) {
-      await fetchBudgets();
-      return true;
-    } else {
-      const json = await res.json();
-      throw new Error(json.message || 'Failed to add budget');
+    try {
+      const res = await apiClient.post('/budgets', payload);
+      if (res.data.success) {
+        await fetchBudgets();
+        return true;
+      }
+      return false;
+    } catch (err: any) {
+      throw new Error(err.message || 'Failed to add budget');
     }
   };
 
   const updateBudget = async (id: string, data: any) => {
-    const token = getToken();
-    const res = await fetch(`http://localhost:5000/api/budgets/${id}`, {
-      method: 'PATCH',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`
-      },
-      body: JSON.stringify(data)
-    });
-    
-    if (res.ok) {
-      await fetchBudgets();
-      return true;
-    } else {
-      const json = await res.json();
-      throw new Error(json.message || 'Failed to update budget');
+    try {
+      const res = await apiClient.patch(`/budgets/${id}`, data);
+      if (res.data.success) {
+        await fetchBudgets();
+        return true;
+      }
+      return false;
+    } catch (err: any) {
+      throw new Error(err.message || 'Failed to update budget');
     }
   };
 
   const deleteBudget = async (id: string) => {
-    const token = getToken();
-    const res = await fetch(`http://localhost:5000/api/budgets/${id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    
-    if (res.ok) {
-      await fetchBudgets();
-      return true;
+    try {
+      const res = await apiClient.delete(`/budgets/${id}`);
+      if (res.data.success) {
+        await fetchBudgets();
+        return true;
+      }
+      return false;
+    } catch (err: any) {
+      return false;
     }
-    return false;
   };
 
   return { budgets, summary, analytics, loading, error, addBudget, updateBudget, deleteBudget, refresh: fetchBudgets };

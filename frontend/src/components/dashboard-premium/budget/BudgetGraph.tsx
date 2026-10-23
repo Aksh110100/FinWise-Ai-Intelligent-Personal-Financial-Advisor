@@ -4,7 +4,7 @@ const SVG_WIDTH = 800;
 const SVG_HEIGHT = 220;
 
 interface BudgetGraphProps {
-  analytics?: { label: string; budget: number; actual: number }[];
+  analytics?: { label: string; year?: number | string; budget: number; actual: number }[];
 }
 
 export const BudgetGraph: React.FC<BudgetGraphProps> = ({ analytics }) => {

@@ -1,5 +1,4 @@
 import React, { useState, useEffect } from 'react';
-import { mockDashboardData } from '../../data/mockDashboardData';
 
 // Components
 import { DashboardHeader } from '../../components/dashboard-premium/DashboardHeader';
@@ -21,7 +20,7 @@ const Overview: React.FC = () => {
   const [activeAction, setActiveAction] = useState<ActionType>(null);
   const [toastConfig, setToastConfig] = useState<{ message: string; type: 'success' | 'decline' } | null>(null);
 
-  const { dashboardData, addTransaction, applyAIOptimization } = useDashboard();
+  const { refresh } = useDashboard();
 
   useEffect(() => {
     window.scrollTo(0, 0);
@@ -29,38 +28,29 @@ const Overview: React.FC = () => {
     if (userData) {
       try {
         const parsed = JSON.parse(userData);
-        setUserName(parsed.name || dashboardData.user.firstName);
+        setUserName(parsed.name || 'User');
       } catch (e) {
-        setUserName(dashboardData.user.firstName);
+        setUserName('User');
       }
     } else {
-      setUserName(dashboardData.user.firstName);
+      setUserName('User');
     }
   }, []);
 
-  const handleActionSuccess = (data: any, actionType: ActionType) => {
-    // Instead of local state manipulation, we push a transaction to the context
-    // and let it handle dashboard stat updates.
-    if (!actionType) return;
-    addTransaction({
-      merchant: data.name || 'Quick Action',
-      category: data.category || 'General',
-      date: data.date || new Date(),
-      paymentMethod: data.paymentMethod || 'Bank Transfer',
-      amount: data.amount,
-      type: actionType === 'expense' ? 'expense' : 'income',
-      note: data.note || ''
-    });
+  const handleActionSuccess = (_data: any, _actionType: ActionType) => {
+    // After a quick action succeeds, refresh dashboard data from the API
+    refresh();
+    setToastConfig({ message: 'Action completed successfully', type: 'success' });
+    setTimeout(() => setToastConfig(null), 3500);
   };
 
-  const handleAIOptimization = (type: string) => {
-    applyAIOptimization(type, 2400); // 2400 is the hardcoded mock optimization amount for this demo
-    setToastConfig({ message: 'Optimization Applied', type: 'success' });
+  const handleAIOptimization = (_type: string) => {
+    setToastConfig({ message: 'Insight acknowledged', type: 'success' });
     setTimeout(() => setToastConfig(null), 3500);
   };
 
   const handleAIDecline = () => {
-    setToastConfig({ message: 'Optimization Declined', type: 'decline' });
+    setToastConfig({ message: 'Insight dismissed', type: 'decline' });
     setTimeout(() => setToastConfig(null), 3500);
   };
 
@@ -74,22 +64,22 @@ const Overview: React.FC = () => {
           </div>
         </div>
         
-        <KPIGrid data={dashboardData.overview} />
+        <KPIGrid />
 
         <div className="dashboard-row-2">
           <MainGraph />
-          <SpendingDonut categories={dashboardData.spending} total={dashboardData.overview.monthlyExpenses} />
+          <SpendingDonut />
         </div>
 
         <div className="dashboard-row-3">
-          <FinancialHealth score={dashboardData.health.score} />
+          <FinancialHealth />
           <AIInsightCard onActionClick={handleAIOptimization} onDeclineClick={handleAIDecline} />
           <SavingsProgress />
         </div>
 
         <div className="dashboard-row-2">
           <InvestmentOverview />
-          <GoalList goals={dashboardData.goals} />
+          <GoalList />
         </div>
 
       </div>

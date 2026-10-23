@@ -1,13 +1,13 @@
 import React, { useState, useEffect } from 'react';
 import { Outlet, useLocation, useNavigate, Link } from 'react-router-dom';
-import { LayoutDashboard, Wallet, PiggyBank, TrendingUp, Target, Sparkles, FileText, Settings, User, Search, Bell } from 'lucide-react';
+import { LayoutDashboard, Wallet, PiggyBank, TrendingUp, Target, Sparkles, FileText, Settings, User, Search, Bell, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
 import { DashboardProvider } from '../context/DashboardContext';
 import '../styles/dashboard.css';
 
 const NAV_ITEMS = [
   { path: '/dashboard', label: 'Overview', icon: LayoutDashboard },
   { path: '/expenses', label: 'Expenses', icon: Wallet },
-  { path: '/budget', label: 'Budget', icon: Wallet }, // Optional placeholder
+  { path: '/budget', label: 'Budget', icon: Wallet },
   { path: '/savings', label: 'Savings', icon: PiggyBank },
   { path: '/investments', label: 'Investments', icon: TrendingUp },
   { path: '/goals', label: 'Goals', icon: Target },
@@ -22,6 +22,7 @@ export const DashboardLayout: React.FC = () => {
   const [isTransitioning, setIsTransitioning] = useState(false);
   const [displayPath, setDisplayPath] = useState(location.pathname);
   const [isNotificationOpen, setIsNotificationOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => localStorage.getItem('finwise_sidebar_collapsed') === 'true');
 
   useEffect(() => {
     const idx = NAV_ITEMS.findIndex(item => item.path === location.pathname);
@@ -42,12 +43,32 @@ export const DashboardLayout: React.FC = () => {
     navigate('/login');
   };
 
+  const toggleSidebar = () => {
+    const newState = !isSidebarCollapsed;
+    setIsSidebarCollapsed(newState);
+    localStorage.setItem('finwise_sidebar_collapsed', String(newState));
+  };
+
   return (
     <div className="dashboard-app-container">
+      <style>{`
+        .premium-sidebar { transition: width 0.3s cubic-bezier(0.22, 1, 0.36, 1); overflow-x: hidden; }
+        .premium-sidebar.collapsed { width: 80px; }
+        .dashboard-main-area { transition: margin-left 0.3s cubic-bezier(0.22, 1, 0.36, 1); }
+        .dashboard-main-area.collapsed { margin-left: 80px; }
+        .sidebar-link { transition: all 0.3s ease; }
+        .premium-sidebar.collapsed .sidebar-link { justify-content: center; padding: 0; }
+        .sidebar-link span { white-space: nowrap; transition: opacity 0.2s, width 0.2s; overflow: hidden; }
+        .premium-sidebar.collapsed .sidebar-link span { opacity: 0; width: 0; display: none; }
+        .premium-sidebar.collapsed .active-indicator { left: 0; }
+      `}</style>
+      
       {/* Sidebar */}
-      <aside className="premium-sidebar">
-        <Link to="/dashboard" className="sidebar-logo" style={{ textDecoration: 'none' }}>
-          <img src="/logo.png" alt="FinWise AI" style={{ height: '52px', objectFit: 'contain', transform: 'translateX(-32px)' }} />
+      <aside className={`premium-sidebar ${isSidebarCollapsed ? 'collapsed' : ''}`}>
+        <Link to="/dashboard" className="sidebar-logo" style={{ textDecoration: 'none', display: 'flex', justifyContent: isSidebarCollapsed ? 'center' : 'flex-start', padding: isSidebarCollapsed ? '24px 0 32px 0' : '24px 16px 32px 16px', transition: 'all 0.3s' }}>
+          <div style={{ width: isSidebarCollapsed ? '38px' : '200px', height: '52px', overflow: 'hidden', transition: 'width 0.3s ease', display: 'flex', alignItems: 'flex-start' }}>
+            <img src="/logo.png" alt="FinWise AI" style={{ height: '52px', objectFit: 'contain', transform: 'translateX(-32px)', maxWidth: 'none', flexShrink: 0 }} />
+          </div>
         </Link>
         
         <nav className="sidebar-nav">
@@ -60,6 +81,7 @@ export const DashboardLayout: React.FC = () => {
                 key={item.path} 
                 to={item.path} 
                 className={`sidebar-link ${isActive ? 'active' : ''}`}
+                title={isSidebarCollapsed ? item.label : ''}
               >
                 <Icon size={18} />
                 <span>{item.label}</span>
@@ -70,19 +92,29 @@ export const DashboardLayout: React.FC = () => {
 
         <div className="sidebar-bottom">
           <div className="sidebar-divider"></div>
-          <Link to="/settings" className={`sidebar-link ${location.pathname === '/settings' ? 'active' : ''}`}>
+          <Link to="/settings" className={`sidebar-link ${location.pathname === '/settings' ? 'active' : ''}`} title={isSidebarCollapsed ? 'Settings' : ''}>
             <Settings size={18} />
             <span>Settings</span>
           </Link>
-          <button className="sidebar-link" onClick={handleLogout}>
+          <button className="sidebar-link" onClick={handleLogout} title={isSidebarCollapsed ? 'Logout' : ''}>
             <User size={18} />
             <span>Logout</span>
+          </button>
+          
+          <button 
+            className="sidebar-link" 
+            onClick={toggleSidebar} 
+            title={isSidebarCollapsed ? 'Expand' : 'Collapse'}
+            style={{ marginTop: '12px', color: 'rgba(255,255,255,0.4)' }}
+          >
+            {isSidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+            <span>Collapse Menu</span>
           </button>
         </div>
       </aside>
 
       {/* Main Content Area */}
-      <main className="dashboard-main-area">
+      <main className={`dashboard-main-area ${isSidebarCollapsed ? 'collapsed' : ''}`}>
         {/* Topbar */}
         <header className="premium-topbar">
           <div className="topbar-search">

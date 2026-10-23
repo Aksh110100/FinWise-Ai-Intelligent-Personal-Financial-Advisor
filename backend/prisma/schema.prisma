@@ -29,6 +29,8 @@ model User {
   Savings         Saving[]
   Goals           Goal[]
   Investments     Investment[]
+  InvestmentPlans InvestmentPlan[]
+  PortfolioSnaps  PortfolioSnapshot[]
   ReceiptScans    ReceiptScan[]
   ImportJobs      ImportJob[]
   AIConversations AIConversation[]
@@ -293,10 +295,13 @@ model Investment {
   userId         String
   accountId      String?
   name           String
+  symbol         String?
   type           InvestmentType
   investedAmount Decimal        @db.Decimal(19, 4)
   currentValue   Decimal?       @db.Decimal(19, 4)
   quantity       Decimal?       @db.Decimal(19, 8)
+  purchasePrice  Decimal?       @db.Decimal(19, 4)
+  currentPrice   Decimal?       @db.Decimal(19, 4)
   purchaseDate   DateTime?
   notes          String?
   createdAt      DateTime       @default(now())
@@ -306,6 +311,37 @@ model Investment {
   Account Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
 
   @@index([userId])
+}
+
+model InvestmentPlan {
+  id                  String         @id @default(uuid())
+  userId              String
+  name                String
+  assetType           InvestmentType
+  plannedAmount       Decimal        @db.Decimal(19, 4)
+  targetDate          DateTime?
+  contributionFreq    String?
+  notes               String?
+  status              String         @default("PLANNED")
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  User User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId])
+}
+
+model PortfolioSnapshot {
+  id                    String   @id @default(uuid())
+  userId                String
+  totalInvested         Decimal  @db.Decimal(19, 4)
+  currentPortfolioValue Decimal  @db.Decimal(19, 4)
+  totalReturns          Decimal  @db.Decimal(19, 4)
+  returnPercentage      Decimal  @db.Decimal(5, 2)
+  snapshotDate          DateTime @default(now())
+  createdAt             DateTime @default(now())
+
+  User User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@index([userId, snapshotDate])
 }
 
 enum InvestmentType {

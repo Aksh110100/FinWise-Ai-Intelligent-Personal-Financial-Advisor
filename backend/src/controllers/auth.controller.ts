@@ -113,22 +113,8 @@ export class AuthController {
         return sendError(res, 'Invalid or expired refresh token', 401);
       }
 
-      // Check for 2-minute grace period if rememberMe is false
-      if (!session.rememberMe) {
-        const twoMinutes = 2 * 60 * 1000;
-        const now = Date.now();
-        const lastActivity = session.lastActivityAt ? session.lastActivityAt.getTime() : session.createdAt.getTime();
-        
-        if (now - lastActivity > twoMinutes) {
-          // Grace period exceeded after browser close or inactivity
-          await prisma.session.update({
-            where: { id: session.id },
-            data: { revokedAt: new Date() }
-          });
-          res.clearCookie(REFRESH_COOKIE_NAME);
-          return sendError(res, 'Session expired due to inactivity or browser close', 401);
-        }
-      }
+      // Allow session cookies to handle browser close naturally.
+      // We do not enforce a 2-minute inactivity timeout here, as it incorrectly logs out active users who just haven't made an API request recently.
 
       // Update activity
       await prisma.session.update({

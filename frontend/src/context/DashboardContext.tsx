@@ -1,231 +1,186 @@
-import React, { createContext, useContext, useState, useEffect, useMemo } from 'react';
-import { mockDashboardData } from '../data/mockDashboardData';
-import { mockTransactions, Transaction } from '../data/mockTransactions';
-import { mockBudgets, Budget } from '../data/mockBudgetData';
+/**
+ * DashboardContext — all data sourced from backend API.
+ * No mock data, no localStorage financial storage.
+ */
+import React, {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+} from 'react';
+import {
+  dashboardApi,
+  DashboardSummary,
+  CashFlowData,
+  SpendingBreakdownData,
+  InsightsData,
+} from '../api/dashboardService';
+
+// ─── State Shapes ─────────────────────────────────────────────────────────────
+
+interface AsyncState<T> {
+  data: T | null;
+  loading: boolean;
+  error: string | null;
+}
+
+function initialAsync<T>(): AsyncState<T> {
+  return { data: null, loading: false, error: null };
+}
+
+// ─── Context Type ─────────────────────────────────────────────────────────────
 
 interface DashboardContextType {
-  dashboardData: typeof mockDashboardData;
-  transactions: Transaction[];
-  budgets: Budget[];
-  simulatorSavings: number;
-  addTransaction: (tx: Omit<Transaction, 'id'>) => void;
-  addTransactions: (txs: Omit<Transaction, 'id'>[]) => { imported: number, duplicates: number };
-  applyAIOptimization: (type: string, amount: number) => void;
-  addBudget: (budget: Omit<Budget, 'id' | 'createdAt'>) => void;
-  updateBudget: (id: string, updates: Partial<Budget>) => void;
-  deleteBudget: (id: string) => void;
-  setSimulatorSavings: (amount: number) => void;
+  summary: AsyncState<DashboardSummary>;
+  cashFlow: AsyncState<CashFlowData>;
+  spendingBreakdown: AsyncState<SpendingBreakdownData>;
+  insights: AsyncState<InsightsData>;
+  cashFlowRange: string;
+  summaryRange: string;
+  setCashFlowRange: (range: string) => void;
+  setSummaryRange: (range: string) => void;
+  /** Call after any mutation (add expense, goal, etc.) to refresh dashboard */
+  refresh: () => void;
 }
 
 const DashboardContext = createContext<DashboardContextType | undefined>(undefined);
 
+// ─── Provider ─────────────────────────────────────────────────────────────────
+
 export const DashboardProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [dashboardDataState, setDashboardDataState] = useState(mockDashboardData);
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
-  const [budgets, setBudgets] = useState<Budget[]>([]);
-  const [simulatorSavings, setSimulatorSavings] = useState<number>(0);
-  const [isInitialized, setIsInitialized] = useState(false);
+  const [summaryRange, setSummaryRange] = useState('THIS_MONTH');
+  const [cashFlowRange, setCashFlowRange] = useState('1M');
 
-  // Initialize from local storage on mount
-  useEffect(() => {
-    const savedData = localStorage.getItem('finwise_dashboard_data');
-    if (savedData) {
-      try {
-        setDashboardDataState({ ...mockDashboardData, ...JSON.parse(savedData) });
-      } catch (e) {
-        console.error("Failed to parse saved dashboard data");
-      }
-    }
+  const [summary, setSummary] = useState<AsyncState<DashboardSummary>>(initialAsync());
+  const [cashFlow, setCashFlow] = useState<AsyncState<CashFlowData>>(initialAsync());
+  const [spendingBreakdown, setSpendingBreakdown] = useState<AsyncState<SpendingBreakdownData>>(initialAsync());
+  const [insights, setInsights] = useState<AsyncState<InsightsData>>(initialAsync());
 
-    const savedTxs = localStorage.getItem('finwise_transactions');
-    if (savedTxs) {
-      try {
-        setTransactions(JSON.parse(savedTxs));
-      } catch (e) {
-        setTransactions(mockTransactions);
-      }
-    } else {
-      setTransactions(mockTransactions);
-      localStorage.setItem('finwise_transactions', JSON.stringify(mockTransactions));
+  // Abort stale cash-flow requests when range changes
+  const cashFlowAbortRef = useRef<AbortController | null>(null);
+  const refreshCountRef = useRef(0);
+
+  // ── Summary fetch ─────────────────────────────────────────────────────────
+  const fetchSummary = useCallback(async (range: string) => {
+    setSummary(prev => ({ ...prev, loading: true, error: null }));
+    try {
+      const data = await dashboardApi.getSummary(range);
+      setSummary({ data, loading: false, error: null });
+    } catch (err: any) {
+      setSummary(prev => ({
+        ...prev,
+        loading: false,
+        error: err?.message || 'Failed to load dashboard summary.',
+      }));
     }
-    
-    const savedBudgets = localStorage.getItem('finwise_budgets');
-    if (savedBudgets) {
-      try {
-        setBudgets(JSON.parse(savedBudgets));
-      } catch (e) {
-        setBudgets(mockBudgets);
-      }
-    } else {
-      setBudgets(mockBudgets);
-      localStorage.setItem('finwise_budgets', JSON.stringify(mockBudgets));
-    }
-    
-    setIsInitialized(true);
   }, []);
 
-  // Dynamically calculate metrics based on transactions whenever they change
+  // ── Cash-flow fetch ───────────────────────────────────────────────────────
+  const fetchCashFlow = useCallback(async (range: string) => {
+    // Cancel previous in-flight request
+    if (cashFlowAbortRef.current) {
+      cashFlowAbortRef.current.abort();
+    }
+    cashFlowAbortRef.current = new AbortController();
+
+    setCashFlow(prev => ({ ...prev, loading: true, error: null }));
+    try {
+      const data = await dashboardApi.getCashFlow(range);
+      setCashFlow({ data, loading: false, error: null });
+    } catch (err: any) {
+      if (err?.name === 'CanceledError' || err?.message?.includes('aborted')) return;
+      setCashFlow(prev => ({
+        ...prev,
+        loading: false,
+        error: err?.message || 'Failed to load cash flow data.',
+      }));
+    }
+  }, []);
+
+  // ── Spending breakdown fetch ───────────────────────────────────────────────
+  const fetchSpendingBreakdown = useCallback(async (range: string) => {
+    setSpendingBreakdown(prev => ({ ...prev, loading: true, error: null }));
+    try {
+      const data = await dashboardApi.getSpendingBreakdown(range);
+      setSpendingBreakdown({ data, loading: false, error: null });
+    } catch (err: any) {
+      setSpendingBreakdown(prev => ({
+        ...prev,
+        loading: false,
+        error: err?.message || 'Failed to load spending breakdown.',
+      }));
+    }
+  }, []);
+
+  // ── Insights fetch ────────────────────────────────────────────────────────
+  const fetchInsights = useCallback(async () => {
+    setInsights(prev => ({ ...prev, loading: true, error: null }));
+    try {
+      const data = await dashboardApi.getInsights();
+      setInsights({ data, loading: false, error: null });
+    } catch (err: any) {
+      setInsights(prev => ({
+        ...prev,
+        loading: false,
+        error: err?.message || 'Failed to load insights.',
+      }));
+    }
+  }, []);
+
+  // ── Initial load + summary range change ───────────────────────────────────
   useEffect(() => {
-    if (!isInitialized) return;
-    
-    const expenses = transactions.filter(t => t.type === 'expense');
-    const income = transactions.filter(t => t.type === 'income');
-    
-    const totalExpenses = expenses.reduce((sum, t) => sum + t.amount, 0);
-    const totalIncome = income.reduce((sum, t) => sum + t.amount, 0);
-    
-    // Category Breakdown
-    const catMap = new Map<string, number>();
-    expenses.forEach(t => {
-      const current = catMap.get(t.category) || 0;
-      catMap.set(t.category, current + t.amount);
-    });
-    
-    const spendingArr = Array.from(catMap.entries()).map(([category, amount]) => ({
-      category: category.toUpperCase(),
-      amount: '₹' + amount.toLocaleString('en-IN'),
-      percentage: totalExpenses > 0 ? Math.round((amount / totalExpenses) * 100) : 0
-    })).sort((a, b) => b.percentage - a.percentage);
-    
-    // Update Dashboard Data State
-    setDashboardDataState(prev => {
-      const next = { ...prev };
-      next.overview.monthlyExpenses = '₹' + totalExpenses.toLocaleString('en-IN');
-      next.overview.monthlyIncome = '₹' + totalIncome.toLocaleString('en-IN');
-      next.overview.currentBalance = '₹' + Math.max(0, totalIncome - totalExpenses).toLocaleString('en-IN');
-      next.spending = spendingArr.length > 0 ? spendingArr : prev.spending;
-      
-      // Update monthly summary based on actuals
-      next.monthlySummary.income = next.overview.monthlyIncome;
-      next.monthlySummary.expenses = next.overview.monthlyExpenses;
-      
-      // Dynamically generate AI insight based on highest category
-      if (spendingArr.length > 0) {
-        const topCat = spendingArr[0];
-        next.insights[0] = {
-          title: `You spent more on ${topCat.category.toLowerCase()} this month.`,
-          impactLabel: "POTENTIAL SAVING",
-          impactValue: topCat.amount,
-          impactYearly: '₹' + (parseFloat(topCat.amount.replace(/[^\d.]/g, '')) * 12).toLocaleString('en-IN'),
-          actionLabel: "OPTIMIZE"
-        };
-      }
-      
-      // Update safe to spend logically
-      const safeNum = Math.max(0, totalIncome - totalExpenses - 15000); // reserving some for savings mock
-      next.safeToSpend.amount = '₹' + safeNum.toLocaleString('en-IN');
-      
-      localStorage.setItem('finwise_dashboard_data', JSON.stringify(next));
-      return next;
-    });
-    
-    localStorage.setItem('finwise_transactions', JSON.stringify(transactions));
-  }, [transactions, isInitialized]);
+    fetchSummary(summaryRange);
+  }, [summaryRange, fetchSummary]);
 
-  const addTransaction = (txData: Omit<Transaction, 'id'>) => {
-    const newTx: Transaction = {
-      ...txData,
-      id: `tx-${Date.now()}`
-    };
-    setTransactions(prev => [newTx, ...prev]);
-  };
+  // ── Cash-flow range change ────────────────────────────────────────────────
+  useEffect(() => {
+    fetchCashFlow(cashFlowRange);
+  }, [cashFlowRange, fetchCashFlow]);
 
-  const addTransactions = (txs: Omit<Transaction, 'id'>[]) => {
-    let imported = 0;
-    let duplicates = 0;
-    
-    setTransactions(prev => {
-      const next = [...prev];
-      // Create a set of composite keys to quickly detect duplicates
-      // Key: date(YYYY-MM-DD)_merchant_amount
-      const existingKeys = new Set(
-        prev.map(t => `${t.date.split('T')[0]}_${t.merchant.toLowerCase()}_${t.amount}`)
-      );
-      
-      txs.forEach((tx, idx) => {
-        const key = `${tx.date.split('T')[0]}_${tx.merchant.toLowerCase()}_${tx.amount}`;
-        if (!existingKeys.has(key)) {
-          next.push({
-            ...tx,
-            id: `tx-${Date.now()}-${idx}`
-          });
-          existingKeys.add(key);
-          imported++;
-        } else {
-          duplicates++;
-        }
-      });
-      
-      // Sort descending by date
-      next.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-      
-      return next;
-    });
-    
-    return { imported, duplicates };
-  };
+  // ── Spending breakdown synced with summary range ───────────────────────────
+  useEffect(() => {
+    // Use summary range for spending breakdown (same period)
+    const breakdownRange = summaryRange === 'THIS_MONTH' ? '1M' : summaryRange;
+    fetchSpendingBreakdown(breakdownRange);
+  }, [summaryRange, fetchSpendingBreakdown]);
 
-  const applyAIOptimization = (type: string, amount: number) => {
-    // Legacy mock optimization
-    setDashboardDataState(prev => {
-      const newData = { ...prev };
-      if (type === 'spending' || type === 'subscription' || type === 'food' || type === 'housing') {
-        const currentExp = parseFloat(newData.overview.monthlyExpenses.replace(/[^\d.]/g, ''));
-        newData.overview.monthlyExpenses = '₹' + Math.max(0, currentExp - amount).toLocaleString('en-IN');
-      }
-      localStorage.setItem('finwise_dashboard_data', JSON.stringify(newData));
-      return newData;
-    });
-  };
+  // ── Insights – only need to load once per mount / explicit refresh ─────────
+  useEffect(() => {
+    fetchInsights();
+  }, [fetchInsights]);
 
-  const addBudget = (budgetData: Omit<Budget, 'id' | 'createdAt'>) => {
-    const newBudget: Budget = {
-      ...budgetData,
-      id: `b-${Date.now()}`,
-      createdAt: new Date().toISOString()
-    };
-    
-    setBudgets(prev => {
-      const next = [...prev, newBudget];
-      localStorage.setItem('finwise_budgets', JSON.stringify(next));
-      return next;
-    });
-  };
-
-  const updateBudget = (id: string, updates: Partial<Budget>) => {
-    setBudgets(prev => {
-      const next = prev.map(b => b.id === id ? { ...b, ...updates } : b);
-      localStorage.setItem('finwise_budgets', JSON.stringify(next));
-      return next;
-    });
-  };
-
-  const deleteBudget = (id: string) => {
-    setBudgets(prev => {
-      const next = prev.filter(b => b.id !== id);
-      localStorage.setItem('finwise_budgets', JSON.stringify(next));
-      return next;
-    });
-  };
+  // ── Refresh all on demand ─────────────────────────────────────────────────
+  const refresh = useCallback(() => {
+    refreshCountRef.current += 1;
+    fetchSummary(summaryRange);
+    fetchCashFlow(cashFlowRange);
+    const breakdownRange = summaryRange === 'THIS_MONTH' ? '1M' : summaryRange;
+    fetchSpendingBreakdown(breakdownRange);
+    fetchInsights();
+  }, [summaryRange, cashFlowRange, fetchSummary, fetchCashFlow, fetchSpendingBreakdown, fetchInsights]);
 
   return (
-    <DashboardContext.Provider value={{ 
-      dashboardData: dashboardDataState, 
-      transactions, 
-      budgets,
-      simulatorSavings,
-      addTransaction,
-      addTransactions,
-      applyAIOptimization,
-      addBudget,
-      updateBudget,
-      deleteBudget,
-      setSimulatorSavings
-    }}>
+    <DashboardContext.Provider
+      value={{
+        summary,
+        cashFlow,
+        spendingBreakdown,
+        insights,
+        cashFlowRange,
+        summaryRange,
+        setCashFlowRange,
+        setSummaryRange,
+        refresh,
+      }}
+    >
       {children}
     </DashboardContext.Provider>
   );
 };
+
+// ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export const useDashboard = () => {
   const context = useContext(DashboardContext);
@@ -234,4 +189,3 @@ export const useDashboard = () => {
   }
   return context;
 };
-

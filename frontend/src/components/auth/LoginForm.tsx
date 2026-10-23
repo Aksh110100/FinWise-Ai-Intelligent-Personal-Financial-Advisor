@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { setToken } from '../../utils/auth';
-
+import { apiClient } from '../../api/client';
 export const LoginForm: React.FC<{ isAnimatingOut: boolean }> = ({ isAnimatingOut }) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -16,29 +16,18 @@ export const LoginForm: React.FC<{ isAnimatingOut: boolean }> = ({ isAnimatingOu
     setError('');
 
     try {
-      const res = await fetch('http://localhost:5000/api/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({ email, password, rememberMe })
-      });
-
-      const data = await res.json();
-
-      if (res.ok) {
-        setToken(data.accessToken);
-        navigate('/dashboard');
-      } else {
-        if (res.status === 401) {
-          setError('Invalid email or password.');
-        } else {
-          setError(data.message || 'Login failed');
-        }
-        setSuccessMessage('');
-      }
-    } catch (err) {
+      const res = await apiClient.post('/auth/login', { email, password, rememberMe });
+      const data = res.data;
+      
+      setToken(data.accessToken);
+      navigate('/dashboard');
+    } catch (err: any) {
       console.error('Login fetch error:', err);
-      setError('Unable to connect to the server. Please try again.');
+      if (err.response?.status === 401) {
+        setError('Invalid email or password.');
+      } else {
+        setError(err.message || 'Login failed');
+      }
       setSuccessMessage('');
     }
   };

@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { getToken } from '../../../utils/auth';
-
+import { apiClient } from '../../../api/client';
 interface AIExpenseAnalysisProps {
   filters?: any;
 }
@@ -29,16 +28,13 @@ export const AIExpenseAnalysis: React.FC<AIExpenseAnalysisProps> = ({ filters })
       try {
         setLoading(true);
         setError(null);
-        const token = getToken();
+        
         
         const queryParams = new URLSearchParams();
         if (filters?.dateRange) queryParams.append('range', filters.dateRange);
         
-        const res = await fetch(`http://localhost:5000/api/expenses/analytics/category-comparison?${queryParams.toString()}`, {
-          headers: { Authorization: `Bearer ${token}` }
-        });
-        
-        const json = await res.json();
+        const res = await apiClient.get(`/expenses/analytics/category-comparison?${queryParams.toString()}`);
+        const json = res.data;
         
         if (isMounted) {
           if (json.success) {
